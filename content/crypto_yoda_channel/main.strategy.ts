@@ -1,4 +1,4 @@
-import { addStrategySchema, Cache, getClosePrice } from "backtest-kit";
+import { addStrategySchema, Cache, getCandles } from "backtest-kit";
 import { scrapeLookback } from "telegram-reader";
 import { memoize, str } from "functools-kit";
 import {
@@ -80,7 +80,7 @@ const TradingPositionFormat = {
   },
 } satisfies FormatModel;
 
-const getSignal = Cache.fn(
+const getSignal = Cache.file(
   async (symbol: string, when: Date) => {
     const coin = `#${symbol.replace("USDT", "")}`;
 
@@ -124,6 +124,7 @@ const getSignal = Cache.fn(
   },
   {
     interval: "4h",
+    name: "crypto_yoda_entry"
   },
 );
 
@@ -142,12 +143,12 @@ addStrategySchema({
       return null;
     }
 
-    const closePrice = await getClosePrice(symbol, "1m");
+    const [{ low, high }] = await getCandles(symbol, "1m", 1);
 
     const minPrice = Math.min(entry.entryFrom, entry.entryTo);
     const maxPrice = Math.max(entry.entryFrom, entry.entryTo);
 
-    if (closePrice < minPrice || closePrice > maxPrice) {
+    if (high < minPrice || low > maxPrice) {
       return null;
     }
 
