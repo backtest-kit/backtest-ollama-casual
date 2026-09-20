@@ -9,47 +9,50 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 
 const CHANNEL_NAME = "crypto_yoda_channel" as const;
 
-const getPrompt = memoize(([symbol]) => `${symbol}`, async (symbol: string) => {
-  const template = await readFile("./prompt.mustache", "utf-8");
-  return Mustache.render(template, { symbol });
-});
+const getPrompt = memoize(
+  ([symbol]) => `${symbol}`,
+  async (symbol: string) => {
+    const template = await readFile("./prompt.mustache", "utf-8");
+    return Mustache.render(template, { symbol });
+  },
+);
 
 const TradingPosition = z.object({
-  id: z.number({
-    description: str.newline(
-      "ID сообщения из которого был сформирован сигнал.",
-      "Это число, пиши только его без строгового префикса ID, например, 2134",
-    ),
-  }),
-  symbol: z.string({
-    description: str.newline(
-      "Тикер позиции строго в формате *USDT, Например",
-      "Текст #BTC/USDT преобразуем в BTCUSDT без # и /",
-    ),
-  }),
-  position: z.enum(["long", "short", "wait"], {
-    description: "Тип позиции, long или short. Если позиции нет, верни wait",
-  }),
-  entryFrom: z.number({
-    description: "Цена входа ОТ",
-  }),
-  entryTo: z.number({
-    description: "Цена входа ДО",
-  }),
-  targets: z.array(
-    z.number({
-      description: "Цели позиции, 5 уровней",
-    }),
-  ),
-  stoploss: z.number({
-    description: "СТОП ЛОСС, одна точка хард стоп",
-  }),
-  reasoning: z.string({
-    description: str.newline(
-      "Строковое описание почему ты сделал именно такое решение",
-      "Будет использовано программистом для отладки"
+  id: z
+    .number()
+    .describe(
+      str.newline(
+        "ID сообщения из которого был сформирован сигнал.",
+        "Это число, пиши только его без строгового префикса ID, например, 2134",
+      ),
     )
-  })
+    .default(-1),
+  symbol: z
+    .string()
+    .describe(
+      str.newline(
+        "Тикер позиции строго в формате *USDT, Например",
+        "Текст #BTC/USDT преобразуем в BTCUSDT без # и /",
+      ),
+    )
+    .default("UNKNOWN"),
+  position: z
+    .enum(["long", "short", "wait"])
+    .describe("Тип позиции, long или short. Если позиции нет, верни wait")
+    .default("wait"),
+  entryFrom: z.number().describe("Цена входа ОТ").default(0),
+  entryTo: z.number().describe("Цена входа ДО").default(0),
+  targets: z.array(z.number().describe("Цели позиции, 5 уровней")).default([0]),
+  stoploss: z.number().describe("СТОП ЛОСС, одна точка хард стоп").default(0),
+  reasoning: z
+    .string()
+    .describe(
+      str.newline(
+        "Строковое описание почему ты сделал именно такое решение",
+        "Будет использовано программистом для отладки",
+      ),
+    )
+    .default(""),
 });
 
 const getSignal = Cache.fn(
@@ -84,15 +87,13 @@ const getSignal = Cache.fn(
             "",
             `[${date.toISOString()}]: https://t.me/${channel}/${id}`,
           ),
-        }))
+        })),
       ],
       format: zodToJsonSchema(TradingPosition),
       think: false,
     });
 
-    const entry = TradingPosition.parse(
-      JSON.parse(response.message.content),
-    );
+    const entry = TradingPosition.parse(JSON.parse(response.message.content));
 
     return { entry, messages };
   },
@@ -104,7 +105,6 @@ const getSignal = Cache.fn(
 addStrategySchema({
   strategyName: "main_strategy",
   getSignal: async (symbol, when) => {
-
     console.log(symbol, when);
 
     const { entry, messages } = await getSignal(symbol, when);
