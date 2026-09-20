@@ -90,9 +90,9 @@ addExchangeSchema({
 });
 
 addFrameSchema({
-  frameName: "jan_2026_frame",
+  frameName: "aug_2026_frame",
   interval: "1m",
-  startDate: new Date("2026-01-01T00:00:00Z"),
-  endDate: new Date("2026-01-31T23:59:59Z"),
-  note: "January 2026",
+  startDate: new Date("2026-08-01T00:00:00Z"),
+  endDate: new Date("2026-08-31T23:59:59Z"),
+  note: "August 2026",
 });

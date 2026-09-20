@@ -20,20 +20,21 @@
     "ioredis": "5.6.1",
     "lodash": "4.18.1",
     "mongoose": "8.23.0",
-    "ollama": "0.6.3"
+    "mustache": "4.2.0",
+    "ollama": "0.6.3",
+    "telegram-reader": "1.1.0",
+    "zod-to-json-schema": "3.25.2"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"
   },
   "devDependencies": {
     "@types/node": "22.9.0",
+    "@types/mustache": "4.2.6",
     "cross-env": "10.1.0",
     "dotenv-cli": "11.0.0",
     "glob": "11.0.1",
     "ts-morph": "27.0.2",
     "tslib": "2.7.0"
-  },
-  "workspaces": [
-    "./packages/*"
-  ]
+  }
 }
