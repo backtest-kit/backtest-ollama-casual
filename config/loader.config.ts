@@ -26,6 +26,8 @@ const SYMBOL_LIST = [
   "PUMPUSDT",
 ];
 
+Object.assign(globalThis, { SYMBOL_LIST });
+
 const CACHE_CANDLES_FN = async () => {
   const [exchangeSchema] = await listExchangeSchema();
   const [frameSchema] = await listFrameSchema();

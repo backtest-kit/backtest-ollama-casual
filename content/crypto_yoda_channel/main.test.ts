@@ -13,6 +13,8 @@ const CHANNEL_NAME = "crypto_yoda_channel" as const;
 
 type Position = "short" | "long";
 
+declare var SYMBOL_LIST: string[];
+
 const getPrompt = memoize(
   ([symbol]) => `${symbol}`,
   async (symbol: string) => {
