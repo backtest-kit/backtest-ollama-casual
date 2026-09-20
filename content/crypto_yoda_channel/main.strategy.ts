@@ -131,7 +131,6 @@ const getSignal = Cache.file(
 addStrategySchema({
   strategyName: "main_strategy",
   getSignal: async (symbol, when) => {
-    console.log(symbol, when);
 
     const { entry, messages } = await getSignal(symbol, when);
 
