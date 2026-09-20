@@ -19,39 +19,55 @@ const getPrompt = memoize(
 
 const TradingPosition = z.object({
   id: z
-    .number()
-    .describe(
-      str.newline(
+    .number({
+      description: str.newline(
         "ID сообщения из которого был сформирован сигнал.",
         "Это число, пиши только его без строгового префикса ID, например, 2134",
       ),
-    )
+    })
     .default(-1),
   symbol: z
-    .string()
-    .describe(
-      str.newline(
+    .string({
+      description: str.newline(
         "Тикер позиции строго в формате *USDT, Например",
         "Текст #BTC/USDT преобразуем в BTCUSDT без # и /",
       ),
-    )
+    })
     .default("UNKNOWN"),
   position: z
-    .enum(["long", "short", "wait"])
-    .describe("Тип позиции, long или short. Если позиции нет, верни wait")
+    .enum(["long", "short", "wait"], {
+      description: "Тип позиции, long или short. Если позиции нет, верни wait",
+    })
     .default("wait"),
-  entryFrom: z.number().describe("Цена входа ОТ").default(0),
-  entryTo: z.number().describe("Цена входа ДО").default(0),
-  targets: z.array(z.number().describe("Цели позиции, 5 уровней")).default([0]),
-  stoploss: z.number().describe("СТОП ЛОСС, одна точка хард стоп").default(0),
+  entryFrom: z
+    .number({
+      description: "Цена входа ОТ",
+    })
+    .default(0),
+  entryTo: z
+    .number({
+      description: "Цена входа ДО",
+    })
+    .default(0),
+  targets: z
+    .array(
+      z.number({
+        description: "Цели позиции, 5 уровней",
+      }),
+    )
+    .default([0]),
+  stoploss: z
+    .number({
+      description: "СТОП ЛОСС, одна точка хард стоп",
+    })
+    .default(0),
   reasoning: z
-    .string()
-    .describe(
-      str.newline(
+    .string({
+      description: str.newline(
         "Строковое описание почему ты сделал именно такое решение",
         "Будет использовано программистом для отладки",
       ),
-    )
+    })
     .default(""),
 });
 
