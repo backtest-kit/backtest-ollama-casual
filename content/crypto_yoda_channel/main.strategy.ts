@@ -1,13 +1,17 @@
 import { addStrategySchema, Cache, getClosePrice } from "backtest-kit";
 import { scrapeLookback } from "telegram-reader";
 import { memoize, str } from "functools-kit";
-import ollama from "ollama";
-import { z } from "zod";
+import {
+  generateObject,
+  InferenceName,
+  type FormatModel,
+} from "json-inference";
 import { readFile } from "fs/promises";
 import Mustache from "mustache";
-import { zodToJsonSchema } from "zod-to-json-schema";
 
 const CHANNEL_NAME = "crypto_yoda_channel" as const;
+
+type Position = "short" | "long";
 
 const getPrompt = memoize(
   ([symbol]) => `${symbol}`,
@@ -17,59 +21,64 @@ const getPrompt = memoize(
   },
 );
 
-const TradingPosition = z.object({
-  id: z
-    .number({
+const TradingPositionFormat = {
+  type: "object",
+  required: [
+    "id",
+    "symbol",
+    "position",
+    "entryFrom",
+    "entryTo",
+    "targets",
+    "stoploss",
+    "reasoning",
+  ],
+  properties: {
+    id: {
+      type: "number",
       description: str.newline(
         "ID сообщения из которого был сформирован сигнал.",
-        "Это число, пиши только его без строгового префикса ID, например, 2134",
+        "Это число, пиши только его без строкового префикса ID, например, 2134.",
+        "Если сигнала нет, верни -1",
       ),
-    })
-    .default(-1),
-  symbol: z
-    .string({
+    },
+    symbol: {
+      type: "string",
       description: str.newline(
         "Тикер позиции строго в формате *USDT, Например",
         "Текст #BTC/USDT преобразуем в BTCUSDT без # и /",
       ),
-    })
-    .default("UNKNOWN"),
-  position: z
-    .enum(["long", "short", "wait"], {
+    },
+    position: {
+      type: "string",
+      enum: ["long", "short", "wait"],
       description: "Тип позиции, long или short. Если позиции нет, верни wait",
-    })
-    .default("wait"),
-  entryFrom: z
-    .number({
-      description: "Цена входа ОТ",
-    })
-    .default(0),
-  entryTo: z
-    .number({
-      description: "Цена входа ДО",
-    })
-    .default(0),
-  targets: z
-    .array(
-      z.number({
-        description: "Цели позиции, 5 уровней",
-      }),
-    )
-    .default([0]),
-  stoploss: z
-    .number({
-      description: "СТОП ЛОСС, одна точка хард стоп",
-    })
-    .default(0),
-  reasoning: z
-    .string({
+    },
+    entryFrom: {
+      type: "number",
+      description: "Цена входа ОТ. Если сигнала нет, верни 0",
+    },
+    entryTo: {
+      type: "number",
+      description: "Цена входа ДО. Если сигнала нет, верни 0",
+    },
+    targets: {
+      type: "array",
+      description: "Цели позиции, 5 уровней, числа. Если сигнала нет, верни []",
+    },
+    stoploss: {
+      type: "number",
+      description: "СТОП ЛОСС, одна точка хард стоп. Если сигнала нет, верни 0",
+    },
+    reasoning: {
+      type: "string",
       description: str.newline(
         "Строковое описание почему ты сделал именно такое решение",
         "Будет использовано программистом для отладки",
       ),
-    })
-    .default(""),
-});
+    },
+  },
+} satisfies FormatModel;
 
 const getSignal = Cache.fn(
   async (symbol: string, when: Date) => {
@@ -90,26 +99,26 @@ const getSignal = Cache.fn(
       return { entry: null };
     }
 
-    const response = await ollama.chat({
-      model: "gemma4:31b-cloud",
-      messages: [
-        { role: "user", content: await getPrompt(symbol) },
-        ...messages.map(({ id, channel, date, content }) => ({
-          role: "user",
-          content: str.newline(
-            `ID ${id}`,
-            "",
-            content,
-            "",
-            `[${date.toISOString()}]: https://t.me/${channel}/${id}`,
-          ),
-        })),
-      ],
-      format: zodToJsonSchema(TradingPosition),
-      think: false,
-    });
-
-    const entry = TradingPosition.parse(JSON.parse(response.message.content));
+    const entry = await generateObject(
+      InferenceName.OllamaInference,
+      {
+        format: TradingPositionFormat,
+        messages: [
+          { role: "user", content: await getPrompt(symbol) },
+          ...messages.map(({ id, channel, date, content }) => ({
+            role: "user" as const,
+            content: str.newline(
+              `ID ${id}`,
+              "",
+              content,
+              "",
+              `[${date.toISOString()}]: https://t.me/${channel}/${id}`,
+            ),
+          })),
+        ],
+      },
+      "gemma4:31b-cloud",
+    );
 
     return { entry, messages };
   },
@@ -151,7 +160,7 @@ addStrategySchema({
     return {
       id: `${entry.id}`,
       symbol: entry.symbol,
-      position: entry.position,
+      position: <Position> entry.position,
       priceStopLoss: entry.stoploss,
       priceTakeProfit: entry.targets[2],
       minuteEstimatedTime: Infinity,
