@@ -27,8 +27,7 @@ const TradingPositionFormat = {
     "id",
     "symbol",
     "position",
-    "entryFrom",
-    "entryTo",
+    "entryRange",
     "targets",
     "stoploss",
     "reasoning",
@@ -54,17 +53,28 @@ const TradingPositionFormat = {
       enum: ["long", "short", "wait"],
       description: "Тип позиции, long или short. Если позиции нет, верни wait",
     },
-    entryFrom: {
-      type: "number",
-      description: "Цена входа ОТ. Если сигнала нет, верни 0",
-    },
-    entryTo: {
-      type: "number",
-      description: "Цена входа ДО. Если сигнала нет, верни 0",
+    entryRange: {
+      type: "object",
+      description: str.newline(
+        "Диапазон входа в позицию, например для 'в диапазоне $78600 - $79400'",
+        "верни from=78600, to=79400. Если сигнала нет, верни from=0 и to=0",
+      ),
+      required: ["from", "to"],
+      properties: {
+        from: {
+          type: "number",
+          description: "Цена входа ОТ",
+        },
+        to: {
+          type: "number",
+          description: "Цена входа ДО",
+        },
+      },
     },
     targets: {
       type: "array",
       description: "Цели позиции, 5 уровней, числа. Если сигнала нет, верни []",
+      items: { type: "number" },
     },
     stoploss: {
       type: "number",
@@ -124,7 +134,7 @@ const getSignal = Cache.file(
   },
   {
     interval: "4h",
-    name: "crypto_yoda_entry"
+    name: "crypto_yoda_entry_v2"
   },
 );
 
@@ -144,8 +154,8 @@ addStrategySchema({
 
     const [{ low, high }] = await getCandles(symbol, "1m", 1);
 
-    const minPrice = Math.min(entry.entryFrom, entry.entryTo);
-    const maxPrice = Math.max(entry.entryFrom, entry.entryTo);
+    const minPrice = Math.min(entry.entryRange.from, entry.entryRange.to);
+    const maxPrice = Math.max(entry.entryRange.from, entry.entryRange.to);
 
     if (high < minPrice || low > maxPrice) {
       return null;
