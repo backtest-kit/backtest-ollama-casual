@@ -230,7 +230,7 @@ addStrategySchema({
 });
 
 listenActivePing(async ({ data, currentPrice, backtest, when }) => {
-  const levels = <number[]>data.payload?.levels;
+  const levels = <number[]>data.payload.levels;
 
   if (!levels?.length) {
     return;
@@ -337,7 +337,7 @@ listenActivePing(async ({ data, currentPrice, backtest, when }) => {
 });
 
 listenActivePing(async ({ data, currentPrice, backtest, when }) => {
-  const levels = <number[]>data.payload?.levels;
+  const levels = <number[]>data.payload.levels;
 
   if (!levels?.length) {
     return;
