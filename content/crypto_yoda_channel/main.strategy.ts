@@ -18,11 +18,27 @@ const LEVEL_STATE = new State({
   name: "level_state",
 });
 
+const LEVEL_DRIFT_RATIO = 0.3;
+
 function getCurrentLevel(position: Position, levels: number[], currentPrice: number) {
   if (position === "long") {
     return levels.filter((level) => currentPrice >= level).length;
   }
   return levels.filter((level) => currentPrice <= level).length;
+}
+
+function getLevelStep(levels: number[], lastLevel: number) {
+  const levelPrice = levels[lastLevel - 1];
+  const neighborPrice = lastLevel > 1 ? levels[lastLevel - 2] : levels[lastLevel];
+  return Math.abs(levelPrice - neighborPrice);
+}
+
+function getLevelDrift(position: Position, levels: number[], lastLevel: number, currentPrice: number) {
+  const levelPrice = levels[lastLevel - 1];
+  const drift = position === "long"
+    ? levelPrice - currentPrice
+    : currentPrice - levelPrice;
+  return Math.max(drift, 0);
 }
 
 const getPrompt = memoize(
@@ -206,22 +222,31 @@ listenActivePing(async ({ data, currentPrice, backtest, when }) => {
   const currentLevel = getCurrentLevel(<Position>data.position, levels, currentPrice);
   const { lastLevel } = await LEVEL_STATE.getState();
 
-  if (lastLevel === 1 && currentLevel === 0) {
+  if (currentLevel > lastLevel) {
+    await commitSignalNotify(data.symbol, {
+      notificationNote: str.newline(
+        `Достигнут уровень ${currentLevel} из ${levels.length} (цель ${levels[currentLevel - 1]})`,
+        `Трейлинг уровней продолжает сопровождение`,
+      ),
+    });
+    await LEVEL_STATE.setState({ lastLevel: currentLevel });
     return;
   }
 
-  if (lastLevel > currentLevel) {
+  if (!lastLevel) {
+    return;
+  }
+
+  const drift = getLevelDrift(<Position>data.position, levels, lastLevel, currentPrice);
+  const step = getLevelStep(levels, lastLevel);
+
+  if (drift > step * LEVEL_DRIFT_RATIO) {
     await commitSignalNotify(data.symbol, {
       notificationNote: str.newline(
-        `Цена откатилась с уровня ${lastLevel} на уровень ${currentLevel}`,
+        `Цена откатилась за уровень ${lastLevel} на ${((drift / step) * 100).toFixed(0)}% шага при люфте ${LEVEL_DRIFT_RATIO * 100}%`,
         `Позиция закрыта по трейлингу уровней`,
       ),
     });
     await commitClosePending(data.symbol);
-    return;
-  }
-
-  if (currentLevel > lastLevel) {
-    await LEVEL_STATE.setState({ lastLevel: currentLevel });
   }
 });
