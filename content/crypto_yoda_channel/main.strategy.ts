@@ -1,4 +1,4 @@
-import { addStrategySchema, Cache, getCandles } from "backtest-kit";
+import { addStrategySchema, Cache, commitClosePending, commitSignalNotify, getCandles, listenActivePing, State } from "backtest-kit";
 import { scrapeLookback } from "telegram-reader";
 import { memoize, str } from "functools-kit";
 import {
@@ -13,7 +13,15 @@ const CHANNEL_NAME = "crypto_yoda_channel" as const;
 
 type Position = "short" | "long";
 
-declare var SYMBOL_LIST: string[];
+const LEVEL_BUCKET = "level_state";
+const LEVEL_INITIAL = { lastLevel: 0 };
+
+function getCurrentLevel(position: Position, levels: number[], currentPrice: number) {
+  if (position === "long") {
+    return levels.filter((level) => currentPrice >= level).length;
+  }
+  return levels.filter((level) => currentPrice <= level).length;
+}
 
 const getPrompt = memoize(
   ([symbol]) => `${symbol}`,
@@ -174,9 +182,48 @@ addStrategySchema({
       symbol: entry.symbol,
       position: <Position> entry.position,
       priceStopLoss: entry.stoploss,
-      priceTakeProfit: entry.targets[2],
+      priceTakeProfit: entry.position === "long"
+        ? Math.max(...entry.targets)
+        : Math.min(...entry.targets),
       minuteEstimatedTime: Infinity,
+      payload: {
+        levels: entry.targets,
+      },
       note: JSON.stringify(info, null, 2),
     };
   },
+});
+
+listenActivePing(async ({ data, currentPrice, backtest, when }) => {
+  const levels = <number[]>data.payload?.levels;
+
+  if (!levels?.length) {
+    return;
+  }
+
+  const stateDto = {
+    signalId: data.id,
+    bucketName: LEVEL_BUCKET,
+    initialValue: LEVEL_INITIAL,
+    backtest,
+    when,
+  };
+
+  const currentLevel = getCurrentLevel(<Position>data.position, levels, currentPrice);
+  const { lastLevel } = await State._getState<typeof LEVEL_INITIAL>(stateDto);
+
+  if (lastLevel > currentLevel) {
+    await commitSignalNotify(data.symbol, {
+      notificationNote: str.newline(
+        `Цена откатилась с уровня ${lastLevel} на уровень ${currentLevel}`,
+        `Позиция закрыта по трейлингу уровней`,
+      ),
+    });
+    await commitClosePending(data.symbol);
+    return;
+  }
+
+  if (currentLevel > lastLevel) {
+    await State._setState({ lastLevel: currentLevel }, stateDto);
+  }
 });
