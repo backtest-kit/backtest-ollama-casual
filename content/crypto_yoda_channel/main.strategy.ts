@@ -9,12 +9,14 @@ import {
 import { readFile } from "fs/promises";
 import Mustache from "mustache";
 
-const CHANNEL_NAME = "crypto_yoda_channel" as const;
-
 type Position = "short" | "long";
 
-const LEVEL_BUCKET = "level_state";
-const LEVEL_INITIAL = { lastLevel: 0 };
+const CHANNEL_NAME = "crypto_yoda_channel" as const;
+
+const LEVEL_STATE = new State({
+  initialData: { lastLevel: 0 },
+  name: "level_state",
+});
 
 function getCurrentLevel(position: Position, levels: number[], currentPrice: number) {
   if (position === "long") {
@@ -201,16 +203,12 @@ listenActivePing(async ({ data, currentPrice, backtest, when }) => {
     return;
   }
 
-  const stateDto = {
-    signalId: data.id,
-    bucketName: LEVEL_BUCKET,
-    initialValue: LEVEL_INITIAL,
-    backtest,
-    when,
-  };
-
   const currentLevel = getCurrentLevel(<Position>data.position, levels, currentPrice);
-  const { lastLevel } = await State._getState<typeof LEVEL_INITIAL>(stateDto);
+  const { lastLevel } = await LEVEL_STATE.getState();
+
+  if (lastLevel === 1 && currentLevel === 0) {
+    return;
+  }
 
   if (lastLevel > currentLevel) {
     await commitSignalNotify(data.symbol, {
@@ -224,6 +222,6 @@ listenActivePing(async ({ data, currentPrice, backtest, when }) => {
   }
 
   if (currentLevel > lastLevel) {
-    await State._setState({ lastLevel: currentLevel }, stateDto);
+    await LEVEL_STATE.setState({ lastLevel: currentLevel });
   }
 });
