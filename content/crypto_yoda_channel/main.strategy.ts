@@ -210,7 +210,7 @@ addStrategySchema({
     const info = { symbol, entry, message: omit(message, "photo"), url };
 
     return {
-      id: `${entry.id}`,
+      id: `${entry.id}-${entry.symbol.toLowerCase()}`,
       symbol: entry.symbol,
       position: <Position> entry.position,
       priceStopLoss: entry.stoploss,

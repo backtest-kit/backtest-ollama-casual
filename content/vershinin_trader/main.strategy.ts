@@ -272,7 +272,7 @@ listenIdlePing(async ({ symbol, when, currentPrice }) => {
   }
   Log.info("vershinin trade", `${symbol}: открываю ${signal.position} от цены ${currentPrice} по посту ${signal.id}, хард-стоп ${HARD_STOP_PERCENT}%`);
   await commitCreateSignal(symbol, {
-    id: String(signal.id),
+    id: `${signal.id}-${signal.symbol.toLowerCase()}`,
     symbol: signal.symbol,
     ...Position.moonbag({
       position: signal.position,
