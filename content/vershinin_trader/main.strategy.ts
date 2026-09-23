@@ -169,7 +169,7 @@ const getOpenSignal = Cache.file(
       return { signal: null };
     }
 
-    const url = `https://t.me/${message.channel}/${message.id}`;
+    const url = `https://t.me/c/${message.channel.slice(4)}/${message.id}`;
 
     return {
       signal,
@@ -248,7 +248,7 @@ const getCloseSignal = Cache.file(
       return { signal: null };
     }
 
-    const url = `https://t.me/${message.channel}/${message.id}`;
+    const url = `https://t.me/c/${message.channel.slice(4)}/${message.id}`;
 
     return {
       signal,
