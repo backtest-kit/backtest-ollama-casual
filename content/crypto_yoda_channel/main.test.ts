@@ -1,4 +1,4 @@
-import { addStrategySchema, Cache, getCandles } from "backtest-kit";
+import { addStrategySchema, Cache, commitBreakeven, commitClosePending, commitSignalNotify, getCandles, listenActivePing, Log, State } from "backtest-kit";
 import { scrapeLookback } from "telegram-reader";
 import { memoize, str } from "functools-kit";
 import {
@@ -9,11 +9,54 @@ import {
 import { readFile } from "fs/promises";
 import Mustache from "mustache";
 
-const CHANNEL_NAME = "crypto_yoda_channel" as const;
-
 type Position = "short" | "long";
 
-declare var SYMBOL_LIST: string[];
+const CHANNEL_NAME = "crypto_yoda_channel" as const;
+
+const LEVEL_STATE = new State({
+  initialData: { lastLevel: 0 },
+  name: "level_state",
+});
+
+const BREAKEVEN_STATE = new State({
+  initialData: { breakevenSet: false },
+  name: "breakeven_state",
+});
+
+const LEVEL_DRIFT_RATIO = 0.3;
+const STAGNATION_LOG_INTERVAL_MINUTES = 15;
+const BREAKEVEN_TP1_PROGRESS = 0.5;
+
+function getProgress(position: Position, priceOpen: number, targetPrice: number, currentPrice: number) {
+  const total = position === "long"
+    ? targetPrice - priceOpen
+    : priceOpen - targetPrice;
+  const passed = position === "long"
+    ? currentPrice - priceOpen
+    : priceOpen - currentPrice;
+  return total ? passed / total : 0;
+}
+
+function getCurrentLevel(position: Position, levels: number[], currentPrice: number) {
+  if (position === "long") {
+    return levels.filter((level) => currentPrice >= level).length;
+  }
+  return levels.filter((level) => currentPrice <= level).length;
+}
+
+function getLevelStep(levels: number[], lastLevel: number) {
+  const levelPrice = levels[lastLevel - 1];
+  const neighborPrice = lastLevel > 1 ? levels[lastLevel - 2] : levels[lastLevel];
+  return Math.abs(levelPrice - neighborPrice);
+}
+
+function getLevelDrift(position: Position, levels: number[], lastLevel: number, currentPrice: number) {
+  const levelPrice = levels[lastLevel - 1];
+  const drift = position === "long"
+    ? levelPrice - currentPrice
+    : currentPrice - levelPrice;
+  return Math.max(drift, 0);
+}
 
 const getPrompt = memoize(
   ([symbol]) => `${symbol}`,
@@ -29,8 +72,7 @@ const TradingPositionFormat = {
     "id",
     "symbol",
     "position",
-    "entryFrom",
-    "entryTo",
+    "entryRange",
     "targets",
     "stoploss",
     "reasoning",
@@ -56,17 +98,28 @@ const TradingPositionFormat = {
       enum: ["long", "short", "wait"],
       description: "Тип позиции, long или short. Если позиции нет, верни wait",
     },
-    entryFrom: {
-      type: "number",
-      description: "Цена входа ОТ. Если сигнала нет, верни 0",
-    },
-    entryTo: {
-      type: "number",
-      description: "Цена входа ДО. Если сигнала нет, верни 0",
+    entryRange: {
+      type: "object",
+      description: str.newline(
+        "Диапазон входа в позицию, например для 'в диапазоне $78600 - $79400'",
+        "верни from=78600, to=79400. Если сигнала нет, верни from=0 и to=0",
+      ),
+      required: ["from", "to"],
+      properties: {
+        from: {
+          type: "number",
+          description: "Цена входа ОТ",
+        },
+        to: {
+          type: "number",
+          description: "Цена входа ДО",
+        },
+      },
     },
     targets: {
       type: "array",
       description: "Цели позиции, 5 уровней, числа. Если сигнала нет, верни []",
+      items: { type: "number" },
     },
     stoploss: {
       type: "number",
@@ -126,7 +179,7 @@ const getSignal = Cache.file(
   },
   {
     interval: "4h",
-    name: "crypto_yoda_entry"
+    name: "crypto_yoda_entry_v2"
   },
 );
 
@@ -146,8 +199,8 @@ addStrategySchema({
 
     const [{ low, high }] = await getCandles(symbol, "1m", 1);
 
-    const minPrice = Math.min(entry.entryFrom, entry.entryTo);
-    const maxPrice = Math.max(entry.entryFrom, entry.entryTo);
+    const minPrice = Math.min(entry.entryRange.from, entry.entryRange.to);
+    const maxPrice = Math.max(entry.entryRange.from, entry.entryRange.to);
 
     if (high < minPrice || low > maxPrice) {
       return null;
@@ -164,9 +217,166 @@ addStrategySchema({
       symbol: entry.symbol,
       position: <Position> entry.position,
       priceStopLoss: entry.stoploss,
-      priceTakeProfit: entry.targets[2],
+      priceTakeProfit: entry.position === "long"
+        ? Math.max(...entry.targets)
+        : Math.min(...entry.targets),
       minuteEstimatedTime: Infinity,
+      payload: {
+        levels: entry.targets,
+      },
       note: JSON.stringify(info, null, 2),
     };
   },
+});
+
+listenActivePing(async ({ data, currentPrice, backtest, when }) => {
+  const levels = <number[]>data.payload.levels;
+
+  if (!levels?.length) {
+    return;
+  }
+
+  const currentLevel = getCurrentLevel(<Position>data.position, levels, currentPrice);
+  const { lastLevel } = await LEVEL_STATE.getState();
+
+  if (currentLevel > lastLevel) {
+    Log.info("crypto_yoda trailing level_up", {
+      signalId: data.id,
+      symbol: data.symbol,
+      position: data.position,
+      lastLevel,
+      currentLevel,
+      totalLevels: levels.length,
+      levelPrice: levels[currentLevel - 1],
+      currentPrice,
+      priceOpen: data.priceOpen,
+      backtest,
+      when: when.toISOString(),
+    });
+    await commitSignalNotify(data.symbol, {
+      notificationNote: str.newline(
+        `Достигнут уровень ${currentLevel} из ${levels.length} (цель ${levels[currentLevel - 1]})`,
+        `Трейлинг уровней продолжает сопровождение`,
+      ),
+    });
+    await LEVEL_STATE.setState({ lastLevel: currentLevel });
+    return;
+  }
+
+  if (!lastLevel) {
+    const progressToTp1 = getProgress(<Position>data.position, data.priceOpen, levels[0], currentPrice);
+
+    const minutesActive = Math.floor((when.getTime() - data.pendingAt) / 60_000);
+    if (minutesActive > 0 && minutesActive % STAGNATION_LOG_INTERVAL_MINUTES === 0) {
+      Log.debug("crypto_yoda trailing stagnation", {
+        signalId: data.id,
+        symbol: data.symbol,
+        position: data.position,
+        minutesActive,
+        priceOpen: data.priceOpen,
+        currentPrice,
+        tp1Price: levels[0],
+        stopLossPrice: data.priceStopLoss,
+        progressToTp1,
+        progressToStopLoss: getProgress(<Position>data.position, data.priceOpen, data.priceStopLoss, currentPrice),
+        backtest,
+        when: when.toISOString(),
+      });
+    }
+    return;
+  }
+
+  const drift = getLevelDrift(<Position>data.position, levels, lastLevel, currentPrice);
+  const step = getLevelStep(levels, lastLevel);
+  const driftRatio = drift / step;
+
+  if (drift > 0) {
+    Log.debug("crypto_yoda trailing drift", {
+      signalId: data.id,
+      symbol: data.symbol,
+      position: data.position,
+      lastLevel,
+      currentLevel,
+      levelPrice: levels[lastLevel - 1],
+      currentPrice,
+      drift,
+      step,
+      driftRatio,
+      driftRatioLimit: LEVEL_DRIFT_RATIO,
+      backtest,
+      when: when.toISOString(),
+    });
+  }
+
+  if (drift > step * LEVEL_DRIFT_RATIO) {
+    Log.info("crypto_yoda trailing close", {
+      signalId: data.id,
+      symbol: data.symbol,
+      position: data.position,
+      lastLevel,
+      currentLevel,
+      totalLevels: levels.length,
+      levelPrice: levels[lastLevel - 1],
+      currentPrice,
+      priceOpen: data.priceOpen,
+      drift,
+      step,
+      driftRatio,
+      driftRatioLimit: LEVEL_DRIFT_RATIO,
+      backtest,
+      when: when.toISOString(),
+    });
+    await commitSignalNotify(data.symbol, {
+      notificationNote: str.newline(
+        `Цена откатилась за уровень ${lastLevel} на ${(driftRatio * 100).toFixed(0)}% шага при люфте ${LEVEL_DRIFT_RATIO * 100}%`,
+        `Позиция закрыта по трейлингу уровней`,
+      ),
+    });
+    await commitClosePending(data.symbol);
+  }
+});
+
+listenActivePing(async ({ data, currentPrice, backtest, when }) => {
+  const levels = <number[]>data.payload.levels;
+
+  if (!levels?.length) {
+    return;
+  }
+
+  const { breakevenSet } = await BREAKEVEN_STATE.getState();
+
+  if (breakevenSet) {
+    return;
+  }
+
+  const progressToTp1 = getProgress(<Position>data.position, data.priceOpen, levels[0], currentPrice);
+
+  if (progressToTp1 < BREAKEVEN_TP1_PROGRESS) {
+    return;
+  }
+
+  const moved = await commitBreakeven(data.symbol);
+
+  if (!moved) {
+    return;
+  }
+
+  Log.info("crypto_yoda trailing breakeven", {
+    signalId: data.id,
+    symbol: data.symbol,
+    position: data.position,
+    priceOpen: data.priceOpen,
+    currentPrice,
+    tp1Price: levels[0],
+    progressToTp1,
+    backtest,
+    when: when.toISOString(),
+  });
+  await commitSignalNotify(data.symbol, {
+    notificationNote: str.newline(
+      `Пройдено ${(progressToTp1 * 100).toFixed(0)}% пути до TP1`,
+      `Стоп перенесён в безубыток`,
+    ),
+  });
+  await BREAKEVEN_STATE.setState({ breakevenSet: true });
 });

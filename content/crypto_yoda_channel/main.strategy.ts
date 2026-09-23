@@ -18,14 +18,8 @@ const LEVEL_STATE = new State({
   name: "level_state",
 });
 
-const BREAKEVEN_STATE = new State({
-  initialData: { breakevenSet: false },
-  name: "breakeven_state",
-});
-
 const LEVEL_DRIFT_RATIO = 0.3;
 const STAGNATION_LOG_INTERVAL_MINUTES = 15;
-const BREAKEVEN_TP1_PROGRESS = 0.5;
 
 function getProgress(position: Position, priceOpen: number, targetPrice: number, currentPrice: number) {
   const total = position === "long"
@@ -197,16 +191,21 @@ addStrategySchema({
       return null;
     }
 
-    const [{ low, high }] = await getCandles(symbol, "1m", 1);
-
-    const minPrice = Math.min(entry.entryRange.from, entry.entryRange.to);
-    const maxPrice = Math.max(entry.entryRange.from, entry.entryRange.to);
-
-    if (high < minPrice || low > maxPrice) {
+    if (!entry.targets[2]) {
       return null;
     }
 
-    if (!entry.targets[2]) {
+    const [{ low, high }] = await getCandles(symbol, "1m", 1);
+
+    const priceTakeProfit = entry.position === "long"
+      ? Math.max(...entry.targets)
+      : Math.min(...entry.targets);
+
+    if (entry.position === "long" && (low <= entry.stoploss || high >= priceTakeProfit)) {
+      return null;
+    }
+
+    if (entry.position === "short" && (high >= entry.stoploss || low <= priceTakeProfit)) {
       return null;
     }
 
@@ -217,9 +216,7 @@ addStrategySchema({
       symbol: entry.symbol,
       position: <Position> entry.position,
       priceStopLoss: entry.stoploss,
-      priceTakeProfit: entry.position === "long"
-        ? Math.max(...entry.targets)
-        : Math.min(...entry.targets),
+      priceTakeProfit,
       minuteEstimatedTime: Infinity,
       payload: {
         levels: entry.targets,
@@ -334,49 +331,4 @@ listenActivePing(async ({ data, currentPrice, backtest, when }) => {
     });
     await commitClosePending(data.symbol);
   }
-});
-
-listenActivePing(async ({ data, currentPrice, backtest, when }) => {
-  const levels = <number[]>data.payload.levels;
-
-  if (!levels?.length) {
-    return;
-  }
-
-  const { breakevenSet } = await BREAKEVEN_STATE.getState();
-
-  if (breakevenSet) {
-    return;
-  }
-
-  const progressToTp1 = getProgress(<Position>data.position, data.priceOpen, levels[0], currentPrice);
-
-  if (progressToTp1 < BREAKEVEN_TP1_PROGRESS) {
-    return;
-  }
-
-  const moved = await commitBreakeven(data.symbol);
-
-  if (!moved) {
-    return;
-  }
-
-  Log.info("crypto_yoda trailing breakeven", {
-    signalId: data.id,
-    symbol: data.symbol,
-    position: data.position,
-    priceOpen: data.priceOpen,
-    currentPrice,
-    tp1Price: levels[0],
-    progressToTp1,
-    backtest,
-    when: when.toISOString(),
-  });
-  await commitSignalNotify(data.symbol, {
-    notificationNote: str.newline(
-      `Пройдено ${(progressToTp1 * 100).toFixed(0)}% пути до TP1`,
-      `Стоп перенесён в безубыток`,
-    ),
-  });
-  await BREAKEVEN_STATE.setState({ breakevenSet: true });
 });
