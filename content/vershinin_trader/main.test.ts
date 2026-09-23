@@ -1,16 +1,14 @@
 import {
   Cache,
-  Log,
   addStrategySchema,
   listenActivePing,
   listenIdlePing,
   commitCreateSignal,
   commitClosePending,
   Position,
-  listenError,
 } from "backtest-kit";
 import { readFile } from "fs/promises";
-import { errorData, getErrorMessage, memoize, str } from "functools-kit";
+import { memoize, str } from "functools-kit";
 import { FormatModel, generateObject, InferenceName } from "json-inference";
 import Mustache from "mustache";
 import { scrapeLookback } from "telegram-reader";
@@ -124,12 +122,8 @@ const getOpenSignal = Cache.file(
     });
 
     if (!messages.length) {
-      Log.info("vershinin open", `${symbol}: окно ${WINDOW_MINUTES / 60}ч пустое, LLM не вызываю`);
       return { signal: null };
     }
-
-    const withPhoto = messages.filter(({ photo }) => photo).length;
-    Log.info("vershinin open", `${symbol}: отправляю модели ${messages.length} постов (с фото: ${withPhoto}), окно до ${when.toISOString()}`);
 
     const signal = await generateObject(
       InferenceName.OllamaInference,
@@ -153,18 +147,9 @@ const getOpenSignal = Cache.file(
       "gemma4:31b-cloud",
     );
 
-    if (signal.position === "wait") {
-      Log.info("vershinin open", `${symbol}: модель входа не нашла — ${signal.reasoning}`);
-    } else {
-      Log.info("vershinin open", `${symbol}: модель нашла вход ${signal.position} в посте ${signal.id} — ${signal.reasoning}`);
-    }
-
     const message = messages.find((message) => message.id === signal.id)!;
 
     if (!message) {
-      if (signal.position !== "wait") {
-        Log.info("vershinin open", `${symbol}: пост ${signal.id} не найден в окне, сигнал отброшен`);
-      }
       return { signal: null };
     }
 
@@ -200,12 +185,8 @@ const getCloseSignal = Cache.file(
     });
 
     if (!messages.length) {
-      Log.info("vershinin close", `${symbol}: окно ${WINDOW_MINUTES / 60}ч пустое, LLM не вызываю`);
       return { signal: null };
     }
-
-    const withPhoto = messages.filter(({ photo }) => photo).length;
-    Log.info("vershinin close", `${symbol}: позиция открыта, отправляю модели ${messages.length} постов (с фото: ${withPhoto}), окно до ${when.toISOString()}`);
 
     const signal = await generateObject(
       InferenceName.OllamaInference,
@@ -229,18 +210,9 @@ const getCloseSignal = Cache.file(
       "gemma4:31b-cloud",
     );
 
-    if (signal.action === "close") {
-      Log.info("vershinin close", `${symbol}: модель решила закрыть по посту ${signal.id} — ${signal.reasoning}`);
-    } else {
-      Log.info("vershinin close", `${symbol}: модель решила держать — ${signal.reasoning}`);
-    }
-
     const message = messages.find((message) => message.id === signal.id)!;
 
     if (!message) {
-      if (signal.action === "close") {
-        Log.info("vershinin close", `${symbol}: пост ${signal.id} не найден в окне, решение о закрытии отброшено`);
-      }
       return { signal: null };
     }
 
@@ -263,7 +235,6 @@ listenIdlePing(async ({ symbol, when, currentPrice }) => {
   if (signal.position !== "long" && signal.position !== "short") {
     return;
   }
-  Log.info("vershinin trade", `${symbol}: открываю ${signal.position} от цены ${currentPrice} по посту ${signal.id}, хард-стоп ${HARD_STOP_PERCENT}%`);
   await commitCreateSignal(symbol, {
     id: String(signal.id),
     symbol: signal.symbol,
@@ -284,17 +255,7 @@ listenActivePing(async ({ symbol, when }) => {
   if (signal.action !== "close") {
     return;
   }
-  Log.info("vershinin trade", `${symbol}: закрываю позицию по посту ${signal.id} от ${new Date(message.date).toISOString()}`);
   await commitClosePending(symbol, {
     note: JSON.stringify({ signal, message }, null, 2),
   });
 });
-
-listenError((error) => {
-  console.log(error);
-  Log.debug("error", {
-    error: errorData(error),
-    message: getErrorMessage(error),
-  });
-});
-
