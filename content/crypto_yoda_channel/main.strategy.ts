@@ -1,5 +1,5 @@
 import { addStrategySchema, Cache, commitClosePending, commitSignalNotify, listenActivePing, State } from "backtest-kit";
-import { scrapeLookback, lib } from "telegram-reader";
+import { scrapeLookback } from "telegram-reader";
 import { memoize, str } from "functools-kit";
 import {
   generateObject,
@@ -12,13 +12,6 @@ import Mustache from "mustache";
 type Position = "short" | "long";
 
 const CHANNEL_NAME = "crypto_yoda_channel" as const;
-
-lib.loggerService.setLogger({
-  debug: console.log,
-  info: console.log,
-  log: console.log,
-  warn: console.warn,
-})
 
 const LEVEL_STATE = new State({
   initialData: { lastLevel: 0 },
