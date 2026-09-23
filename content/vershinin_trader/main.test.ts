@@ -11,6 +11,7 @@ import { readFile } from "fs/promises";
 import { memoize, str } from "functools-kit";
 import { FormatModel, generateObject, InferenceName } from "json-inference";
 import Mustache from "mustache";
+import { omit } from "lodash";
 import { scrapeLookback } from "telegram-reader";
 
 const CHANNEL_NAME = "-1002833393903";
@@ -243,7 +244,7 @@ listenIdlePing(async ({ symbol, when, currentPrice }) => {
       currentPrice,
       percentStopLoss: HARD_STOP_PERCENT,
     }),
-    note: JSON.stringify({ signal, message }, null, 2),
+    note: JSON.stringify({ signal, message: omit(message, "photo") }, null, 2),
   })
 });
 
@@ -256,6 +257,6 @@ listenActivePing(async ({ symbol, when }) => {
     return;
   }
   await commitClosePending(symbol, {
-    note: JSON.stringify({ signal, message }, null, 2),
+    note: JSON.stringify({ signal, message: omit(message, "photo") }, null, 2),
   });
 });
