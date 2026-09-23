@@ -169,9 +169,12 @@ const getOpenSignal = Cache.file(
       return { signal: null };
     }
 
+    const url = `https://t.me/${message.channel}/${message.id}`;
+
     return {
       signal,
       message,
+      url,
     };
   },
   {
@@ -245,9 +248,12 @@ const getCloseSignal = Cache.file(
       return { signal: null };
     }
 
+    const url = `https://t.me/${message.channel}/${message.id}`;
+
     return {
       signal,
       message,
+      url,
     };
   },
   {
@@ -257,7 +263,7 @@ const getCloseSignal = Cache.file(
 );
 
 listenIdlePing(async ({ symbol, when, currentPrice }) => {
-  const { signal, message } = await getOpenSignal(symbol, when);
+  const { signal, message, url } = await getOpenSignal(symbol, when);
   if (!signal) {
     return;
   }
@@ -273,12 +279,12 @@ listenIdlePing(async ({ symbol, when, currentPrice }) => {
       currentPrice,
       percentStopLoss: HARD_STOP_PERCENT,
     }),
-    note: JSON.stringify({ signal, message: omit(message, "photo") }, null, 2),
+    note: JSON.stringify({ signal, message: omit(message, "photo"), url }, null, 2),
   })
 });
 
 listenActivePing(async ({ symbol, when }) => {
-  const { signal, message } = await getCloseSignal(symbol, when);
+  const { signal, message, url } = await getCloseSignal(symbol, when);
   if (!signal) {
     return;
   }
@@ -287,7 +293,7 @@ listenActivePing(async ({ symbol, when }) => {
   }
   Log.info("vershinin trade", `${symbol}: закрываю позицию по посту ${signal.id} от ${new Date(message.date).toISOString()}`);
   await commitClosePending(symbol, {
-    note: JSON.stringify({ signal, message: omit(message, "photo") }, null, 2),
+    note: JSON.stringify({ signal, message: omit(message, "photo"), url }, null, 2),
   });
 });
 

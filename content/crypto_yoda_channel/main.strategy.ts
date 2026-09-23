@@ -171,7 +171,9 @@ const getSignal = Cache.file(
       return { entry: null };
     }
 
-    return { entry, message };
+    const url = `https://t.me/${message.channel}/${message.id}`;
+
+    return { entry, message, url };
   },
   {
     interval: "5m",
@@ -183,7 +185,7 @@ addStrategySchema({
   strategyName: "main_strategy",
   getSignal: async (symbol, when) => {
 
-    const { entry, message } = await getSignal(symbol, when);
+    const { entry, message, url } = await getSignal(symbol, when);
 
     if (!entry) {
       return null;
@@ -205,7 +207,7 @@ addStrategySchema({
       ? Math.max(...entry.targets)
       : Math.min(...entry.targets);
 
-    const info = { symbol, entry, message: omit(message, "photo") };
+    const info = { symbol, entry, message: omit(message, "photo"), url };
 
     return {
       id: `${entry.id}`,
