@@ -110,8 +110,16 @@ LLM-стратегия для [backtest-kit](https://github.com/tripolskypetr/ba
 ## Запуск
 
 ```bash
-npm start -- --entry --backtest --cache   # бэктест (фрейм из modules/backtest.module.ts) с прогревом свечей
-npm start -- --entry --live               # live-режим
+# бэктест (фрейм из modules/backtest.module.ts)
+npm start -- --backtest --ui --entry ./content/crypto_yoda_channel/main.strategy.ts
+
+# то же с прогревом свечей (скачает свечи бэктеста, работает быстрее)
+npm start -- --backtest --ui --entry ./content/crypto_yoda_channel/main.strategy.ts --cache
+
+# live-режим
+npm start -- --live --ui --entry ./content/crypto_yoda_channel/main.strategy.ts
 ```
+
+Команду запускает сам пользователь (как и `signIn()` для Telegram).
 
 Смена схемы ответа LLM или логики отбора постов требует смены имени кеша (`name` в `Cache.file`) — иначе подмешаются закешированные ответы старой формы.

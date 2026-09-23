@@ -32,7 +32,7 @@ content/<channel_name>/
 
 1. **Предпочтение проекта: используем встроенные дефолтные `CC_TELEGRAM_API_ID` / `CC_TELEGRAM_API_HASH` из telegram-reader** — ничего не задаём, чтобы не засирать среду переменными. Свои `api_id`/`api_hash` с [my.telegram.org](https://my.telegram.org) (через `setConfig` или env) — только если дефолтные перестали работать. Порядок разрешения: `setConfig` → env → встроенные дефолты; текущие значения видно через `getConfig()`.
 
-2. Из папки канала (`content/<channel>/` — файл сохранится в cwd) выполнить одноразовый вход:
+2. Из папки канала (`content/<channel>/` — файл сохранится в cwd) выполнить одноразовый вход (**запускает сам пользователь** — процесс интерактивный):
 
    ```bash
    node -e 'require("telegram-reader").signIn()'
@@ -124,6 +124,22 @@ const result = await generateObject(
 3. Окно скрейпа = свежесть: `limit: FRESH_WINDOW_MINUTES (15), dimension: "minute"` — старый пост не попадает в выборку, LLM не тратится.
 4. Явный гейт свежести в стратегии: `when.getTime() - new Date(message.date).getTime() > FRESH_WINDOW_MINUTES * 60_000 → null`. **Обязательно `new Date(...)`**: `Cache.file` персистит JSON, при чтении из кеша `date` — строка, `.getTime()` на ней падает.
 5. Правила входа и сопровождение — **под формат канала**, из сниппетов `main.test.ts` (State, безубыток, Log-телеметрия). Пример crypto-yoda (формат «диапазон + 5 целей + стоп»): гейт по цене не ставится (моментум-сигналы в зону не возвращаются); тейк — на дальнюю цель направленно (`long → Math.max(...targets)`, `short → Math.min(...targets)`); стоп — из поста; цели — в `payload.levels`; сопровождение — рэтчет уровней (`getCurrentLevel` / `getLevelStep` / `getLevelDrift`, люфт `LEVEL_DRIFT_RATIO = 0.3` доли шага сетки). У канала без сетки целей рэтчет неприменим — сопровождение проектируется от того, что даёт автор (одна цель → безубыток + тейк; только направление → тайм-выход по горизонту эджа из event study).
+
+## Запуск бэктеста
+
+```bash
+npm start -- --backtest --ui --entry ./content/crypto_yoda_channel/main.strategy.ts
+```
+
+или альтернатива — с прогревом свечей (скачает свечи бэктеста, чтобы работать быстрее):
+
+```bash
+npm start -- --backtest --ui --entry ./content/crypto_yoda_channel/main.strategy.ts --cache
+```
+
+Путь после `--entry` — файл стратегии, которую гоняем (тест или прод). Live-режим: `--live` вместо `--backtest`.
+
+**Эту команду запускает сам пользователь** — как и логин в Telegram (`signIn()`). Claude бэктест не запускает: просит пользователя запустить и после завершения анализирует дамп/Mongo.
 
 ## Структура дампа (`content/<channel>/dump/`)
 
@@ -262,7 +278,7 @@ const candles = await db.collection("candle-items")
 - `State` из backtest-kit — per-signal, контекст собирает сам (и внутри `listenActivePing` тоже); `State.enable()` НЕ вызывать — `@backtest-kit/cli` делает это сам.
 - Инстансные `state.getState()/setState()` предпочтительнее статических `_getState/_setState`.
 - Причина закрытия вычисляется из отчёта без доп. полей: `closeReason: "closed"` = наш `commitClosePending` (рэтчет), `stop_loss` + сдвинутый SL (`priceStopLoss !== originalPriceStopLoss`) = безубыток, `stop_loss` без сдвига = честный стоп канала.
-- Запуск: `npm start -- --entry --backtest --cache` (бэктест с прогревом свечей, фрейм в `modules/backtest.module.ts`), `npm start -- --entry --live`.
+- Запуск — см. раздел «Запуск бэктеста»; команду запускает сам пользователь.
 - Символы для торговли — `SYMBOL_LIST` в `config/loader.config.ts`; фрейм бэктеста — `modules/backtest.module.ts` (смена периода = новое имя фрейма).
 - `json-inference` — от 1.1.0 и выше (там `items`, вложенные объекты в схеме, `images` в сообщениях, `generateText`).
 - Модель не детерминирована (`reasoning` и язык гуляют между прогонами), но числовые поля копирует из поста стабильно — tool-грамматика жёстко держит структуру.
