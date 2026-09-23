@@ -199,7 +199,7 @@ addStrategySchema({
       return null;
     }
 
-    if (when.getTime() - message.date.getTime() > FRESH_WINDOW_MINUTES * 60_000) {
+    if (when.getTime() - new Date(message.date).getTime() > FRESH_WINDOW_MINUTES * 60_000) {
       return null;
     }
 
