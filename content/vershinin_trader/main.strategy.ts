@@ -131,7 +131,7 @@ const getOpenSignal = Cache.file(
         format: PositionOpenFormat,
         messages: [
           { role: "user", content: await getPrompt(symbol, "prompt_open") },
-          ...messages.map(({ id, channel, date, content }) => ({
+          ...messages.map(({ id, channel, date, content, photo }) => ({
             role: "user" as const,
             content: str.newline(
               `ID ${id}`,
@@ -140,6 +140,7 @@ const getOpenSignal = Cache.file(
               "",
               `[${date.toISOString()}]: https://t.me/c/${channel.slice(4)}/${id}`,
             ),
+            ...(photo && { images: [photo] }),
           })),
         ],
       },
@@ -159,7 +160,7 @@ const getOpenSignal = Cache.file(
   },
   {
     interval: "4h",
-    name: "vershinin_trader_open_v1",
+    name: "vershinin_trader_open_v2",
   },
 );
 
@@ -193,7 +194,7 @@ const getCloseSignal = Cache.file(
         format: PositionCloseFormat,
         messages: [
           { role: "user", content: await getPrompt(symbol, "prompt_close") },
-          ...messages.map(({ id, channel, date, content }) => ({
+          ...messages.map(({ id, channel, date, content, photo }) => ({
             role: "user" as const,
             content: str.newline(
               `ID ${id}`,
@@ -202,6 +203,7 @@ const getCloseSignal = Cache.file(
               "",
               `[${date.toISOString()}]: https://t.me/c/${channel.slice(4)}/${id}`,
             ),
+            ...(photo && { images: [photo] }),
           })),
         ],
       },
@@ -221,7 +223,7 @@ const getCloseSignal = Cache.file(
   },
   {
     interval: "4h",
-    name: "vershinin_trader_close_v1",
+    name: "vershinin_trader_close_v2",
   },
 );
 
