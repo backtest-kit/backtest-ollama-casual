@@ -141,6 +141,19 @@ npm start -- --backtest --ui --entry ./content/crypto_yoda_channel/main.strategy
 
 **Эту команду запускает сам пользователь** — как и логин в Telegram (`signIn()`). Claude бэктест не запускает: просит пользователя запустить и после завершения анализирует дамп/Mongo.
 
+## Режимы запуска: loader.config.ts и modules/
+
+`config/loader.config.ts` — точка входа CLI. Флаги: `--entry <файл стратегии>` (обязателен, без него выход), `--backtest` / `--live` / `--paper` (режим), `--cache` (прогрев свечей, только вместе с `--backtest`: качает `1m` по границам фрейма для всех символов). Как всё связывается:
+
+- `SYMBOL_LIST` — захардкожен прямо в `loader.config.ts` (правится руками) и прокинут в `globalThis`; прогон запускается **отдельно по каждому символу** (`Backtest.background` / `Live.background` per-symbol) — поэтому каждая копия стратегии фильтрует посты под свой `{{symbol}}`, и LLM-кеш ключуется `SYMBOL_timestamp`.
+- Лоадер берёт **первую** зарегистрированную схему из `listStrategySchema()` / `listExchangeSchema()` / `listFrameSchema()` — т.е. режим определяется тем, какой модуль подключён в прогоне, а не именами. В одном прогоне должен грузиться ровно один exchange-модуль.
+- Фрейм обязателен только для `--backtest` и `--cache`; `Live.background` вызывается без `frameName`.
+- Ветки `--live` и `--paper` в лоадере **идентичны** (обе зовут `Live.background`) — различие режимов живёт в том, какой модуль биржи подключён.
+
+`modules/paper.module.ts` и `modules/backtest.module.ts` регистрируют биржу под одним именем `"ccxt-exchange"` (ccxt binance spot, публичный доступ без API-ключей) и почти совпадают. Различий два: в backtest-модуле дополнительно `getAggregatedTrades` (`publicGetAggTrades` Binance) и `addFrameSchema` (фрейм бэктеста); в paper-модуле их нет. Обе схемы содержат **только данные и форматирование** (`getCandles`, `getOrderBook` — в бэктесте кидает ошибку, `formatPrice`/`formatQuantity` возвращают строки) — методов исполнения ордеров нет ни в одной.
+
+`live.module.ts` (реальная торговля) в проект намеренно не пишется с нуля — код биржи с исполнением ордеров и API-ключами пользователь копипастит из другого своего проекта. При вставке проверить стыковку: `exchangeName` (оставить `"ccxt-exchange"` или следить, что грузится один модуль), формат свечей `{ timestamp, open, high, low, close, volume }`, строки из `formatPrice`/`formatQuantity`.
+
 ## Структура дампа (`content/<channel>/dump/`)
 
 Отчёты пересоздаются каждым прогоном. JSONL — одна строка = одно событие, общая форма: `{ reportName, data: {...}, symbol, strategyName, exchangeName, frameName, timestamp }`; вся аналитика в `data`.
