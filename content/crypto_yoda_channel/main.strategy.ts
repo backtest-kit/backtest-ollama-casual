@@ -6,6 +6,7 @@ import {
   InferenceName,
   type FormatModel,
 } from "json-inference";
+import { omit } from "lodash";
 import { readFile } from "fs/promises";
 import Mustache from "mustache";
 
@@ -204,7 +205,7 @@ addStrategySchema({
       ? Math.max(...entry.targets)
       : Math.min(...entry.targets);
 
-    const info = { symbol, entry, message };
+    const info = { symbol, entry, message: omit(message, "photo") };
 
     return {
       id: `${entry.id}`,
