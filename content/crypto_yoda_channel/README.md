@@ -39,8 +39,8 @@ LLM-стратегия для [backtest-kit](https://github.com/tripolskypetr/ba
 Вход отклоняется (`return null`), если:
 
 - сигнала нет или `position === "wait"`;
-- последняя минутная свеча не пересекает диапазон входа (`high < min(entryRange)` или `low > max(entryRange)`) — цена не в зоне;
-- нет третьей цели (`targets[2]`).
+- нет третьей цели (`targets[2]`);
+- с момента сигнала прошло 15 минут
 
 При входе:
 

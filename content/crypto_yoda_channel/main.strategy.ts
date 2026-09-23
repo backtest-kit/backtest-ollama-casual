@@ -1,5 +1,5 @@
-import { addStrategySchema, Cache, commitBreakeven, commitClosePending, commitSignalNotify, getCandles, listenActivePing, Log, State } from "backtest-kit";
-import { scrapeLookback } from "telegram-reader";
+import { addStrategySchema, Cache, commitClosePending, commitSignalNotify, listenActivePing, State } from "backtest-kit";
+import { scrapeLookback, lib } from "telegram-reader";
 import { memoize, str } from "functools-kit";
 import {
   generateObject,
@@ -13,23 +13,20 @@ type Position = "short" | "long";
 
 const CHANNEL_NAME = "crypto_yoda_channel" as const;
 
+lib.loggerService.setLogger({
+  debug: console.log,
+  info: console.log,
+  log: console.log,
+  warn: console.warn,
+})
+
 const LEVEL_STATE = new State({
   initialData: { lastLevel: 0 },
   name: "level_state",
 });
 
 const LEVEL_DRIFT_RATIO = 0.3;
-const STAGNATION_LOG_INTERVAL_MINUTES = 15;
-
-function getProgress(position: Position, priceOpen: number, targetPrice: number, currentPrice: number) {
-  const total = position === "long"
-    ? targetPrice - priceOpen
-    : priceOpen - targetPrice;
-  const passed = position === "long"
-    ? currentPrice - priceOpen
-    : priceOpen - currentPrice;
-  return total ? passed / total : 0;
-}
+const FRESH_WINDOW_MINUTES = 15;
 
 function getCurrentLevel(position: Position, levels: number[], currentPrice: number) {
   if (position === "long") {
@@ -135,9 +132,9 @@ const getSignal = Cache.file(
 
     let messages = await scrapeLookback({
       channel: CHANNEL_NAME,
-      when,
-      limit: 60 * 4,
+      limit: FRESH_WINDOW_MINUTES,
       dimension: "minute",
+      when,
     });
 
     messages = messages
@@ -146,6 +143,11 @@ const getSignal = Cache.file(
 
     if (!messages.length) {
       return { entry: null };
+    }
+    
+    {
+      const [msg] = messages;
+      console.log("Parsing: ", msg.content.slice(-64));
     }
 
     const entry = await generateObject(
@@ -169,11 +171,17 @@ const getSignal = Cache.file(
       "gemma4:31b-cloud",
     );
 
-    return { entry, messages };
+    const message = messages.find((message) => message.id === entry.id)!;
+
+    if (!message) {
+      return { entry: null };
+    }
+
+    return { entry, message };
   },
   {
-    interval: "4h",
-    name: "crypto_yoda_entry_v2"
+    interval: "5m",
+    name: "crypto_yoda_entry_v3"
   },
 );
 
@@ -181,7 +189,7 @@ addStrategySchema({
   strategyName: "main_strategy",
   getSignal: async (symbol, when) => {
 
-    const { entry, messages } = await getSignal(symbol, when);
+    const { entry, message } = await getSignal(symbol, when);
 
     if (!entry) {
       return null;
@@ -191,25 +199,19 @@ addStrategySchema({
       return null;
     }
 
-    if (!entry.targets[2]) {
+    if (when.getTime() - message.date.getTime() > FRESH_WINDOW_MINUTES * 60_000) {
       return null;
     }
 
-    const [{ low, high }] = await getCandles(symbol, "1m", 1);
-
+    if (!entry.targets[2]) {
+      return null;
+    }
+  
     const priceTakeProfit = entry.position === "long"
       ? Math.max(...entry.targets)
       : Math.min(...entry.targets);
 
-    if (entry.position === "long" && (low <= entry.stoploss || high >= priceTakeProfit)) {
-      return null;
-    }
-
-    if (entry.position === "short" && (high >= entry.stoploss || low <= priceTakeProfit)) {
-      return null;
-    }
-
-    const info = { symbol, entry, messages };
+    const info = { symbol, entry, message };
 
     return {
       id: `${entry.id}`,
@@ -237,19 +239,6 @@ listenActivePing(async ({ data, currentPrice, backtest, when }) => {
   const { lastLevel } = await LEVEL_STATE.getState();
 
   if (currentLevel > lastLevel) {
-    Log.info("crypto_yoda trailing level_up", {
-      signalId: data.id,
-      symbol: data.symbol,
-      position: data.position,
-      lastLevel,
-      currentLevel,
-      totalLevels: levels.length,
-      levelPrice: levels[currentLevel - 1],
-      currentPrice,
-      priceOpen: data.priceOpen,
-      backtest,
-      when: when.toISOString(),
-    });
     await commitSignalNotify(data.symbol, {
       notificationNote: str.newline(
         `Достигнут уровень ${currentLevel} из ${levels.length} (цель ${levels[currentLevel - 1]})`,
@@ -261,25 +250,6 @@ listenActivePing(async ({ data, currentPrice, backtest, when }) => {
   }
 
   if (!lastLevel) {
-    const progressToTp1 = getProgress(<Position>data.position, data.priceOpen, levels[0], currentPrice);
-
-    const minutesActive = Math.floor((when.getTime() - data.pendingAt) / 60_000);
-    if (minutesActive > 0 && minutesActive % STAGNATION_LOG_INTERVAL_MINUTES === 0) {
-      Log.debug("crypto_yoda trailing stagnation", {
-        signalId: data.id,
-        symbol: data.symbol,
-        position: data.position,
-        minutesActive,
-        priceOpen: data.priceOpen,
-        currentPrice,
-        tp1Price: levels[0],
-        stopLossPrice: data.priceStopLoss,
-        progressToTp1,
-        progressToStopLoss: getProgress(<Position>data.position, data.priceOpen, data.priceStopLoss, currentPrice),
-        backtest,
-        when: when.toISOString(),
-      });
-    }
     return;
   }
 
@@ -287,42 +257,7 @@ listenActivePing(async ({ data, currentPrice, backtest, when }) => {
   const step = getLevelStep(levels, lastLevel);
   const driftRatio = drift / step;
 
-  if (drift > 0) {
-    Log.debug("crypto_yoda trailing drift", {
-      signalId: data.id,
-      symbol: data.symbol,
-      position: data.position,
-      lastLevel,
-      currentLevel,
-      levelPrice: levels[lastLevel - 1],
-      currentPrice,
-      drift,
-      step,
-      driftRatio,
-      driftRatioLimit: LEVEL_DRIFT_RATIO,
-      backtest,
-      when: when.toISOString(),
-    });
-  }
-
   if (drift > step * LEVEL_DRIFT_RATIO) {
-    Log.info("crypto_yoda trailing close", {
-      signalId: data.id,
-      symbol: data.symbol,
-      position: data.position,
-      lastLevel,
-      currentLevel,
-      totalLevels: levels.length,
-      levelPrice: levels[lastLevel - 1],
-      currentPrice,
-      priceOpen: data.priceOpen,
-      drift,
-      step,
-      driftRatio,
-      driftRatioLimit: LEVEL_DRIFT_RATIO,
-      backtest,
-      when: when.toISOString(),
-    });
     await commitSignalNotify(data.symbol, {
       notificationNote: str.newline(
         `Цена откатилась за уровень ${lastLevel} на ${(driftRatio * 100).toFixed(0)}% шага при люфте ${LEVEL_DRIFT_RATIO * 100}%`,
