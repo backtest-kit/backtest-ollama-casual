@@ -16,7 +16,7 @@ import Mustache from "mustache";
 import { omit } from "lodash";
 import { scrapeLookback } from "telegram-reader";
 
-const CHANNEL_NAME = "-1002833393903";
+const CHANNEL_NAME = "-1002199975612";
 const WINDOW_MINUTES = 4 * 60;
 const HARD_STOP_PERCENT = 7.5;
 
@@ -125,12 +125,12 @@ const getOpenSignal = Cache.file(
     });
 
     if (!messages.length) {
-      Log.info("vershinin open", `${symbol}: окно ${WINDOW_MINUTES / 60}ч пустое, LLM не вызываю`);
+      Log.info("kondratyev open", `${symbol}: окно ${WINDOW_MINUTES / 60}ч пустое, LLM не вызываю`);
       return { signal: null };
     }
 
     const withPhoto = messages.filter(({ photo }) => photo).length;
-    Log.info("vershinin open", `${symbol}: отправляю модели ${messages.length} постов (с фото: ${withPhoto}), окно до ${when.toISOString()}`);
+    Log.info("kondratyev open", `${symbol}: отправляю модели ${messages.length} постов (с фото: ${withPhoto}), окно до ${when.toISOString()}`);
 
     const signal = await generateObject(
       InferenceName.OllamaInference,
@@ -155,16 +155,16 @@ const getOpenSignal = Cache.file(
     );
 
     if (signal.position === "wait") {
-      Log.info("vershinin open", `${symbol}: модель входа не нашла — ${signal.reasoning}`);
+      Log.info("kondratyev open", `${symbol}: модель входа не нашла — ${signal.reasoning}`);
     } else {
-      Log.info("vershinin open", `${symbol}: модель нашла вход ${signal.position} в посте ${signal.id} — ${signal.reasoning}`);
+      Log.info("kondratyev open", `${symbol}: модель нашла вход ${signal.position} в посте ${signal.id} — ${signal.reasoning}`);
     }
 
     const message = messages.find((message) => message.id === signal.id)!;
 
     if (!message) {
       if (signal.position !== "wait") {
-        Log.info("vershinin open", `${symbol}: пост ${signal.id} не найден в окне, сигнал отброшен`);
+        Log.info("kondratyev open", `${symbol}: пост ${signal.id} не найден в окне, сигнал отброшен`);
       }
       return { signal: null };
     }
@@ -179,7 +179,7 @@ const getOpenSignal = Cache.file(
   },
   {
     interval: "4h",
-    name: "vershinin_trader_open_v2",
+    name: "kondratyev_trading_open_v1",
   },
 );
 
@@ -204,12 +204,12 @@ const getCloseSignal = Cache.file(
     });
 
     if (!messages.length) {
-      Log.info("vershinin close", `${symbol}: окно ${WINDOW_MINUTES / 60}ч пустое, LLM не вызываю`);
+      Log.info("kondratyev close", `${symbol}: окно ${WINDOW_MINUTES / 60}ч пустое, LLM не вызываю`);
       return { signal: null };
     }
 
     const withPhoto = messages.filter(({ photo }) => photo).length;
-    Log.info("vershinin close", `${symbol}: позиция открыта, отправляю модели ${messages.length} постов (с фото: ${withPhoto}), окно до ${when.toISOString()}`);
+    Log.info("kondratyev close", `${symbol}: позиция открыта, отправляю модели ${messages.length} постов (с фото: ${withPhoto}), окно до ${when.toISOString()}`);
 
     const signal = await generateObject(
       InferenceName.OllamaInference,
@@ -234,16 +234,16 @@ const getCloseSignal = Cache.file(
     );
 
     if (signal.action === "close") {
-      Log.info("vershinin close", `${symbol}: модель решила закрыть по посту ${signal.id} — ${signal.reasoning}`);
+      Log.info("kondratyev close", `${symbol}: модель решила закрыть по посту ${signal.id} — ${signal.reasoning}`);
     } else {
-      Log.info("vershinin close", `${symbol}: модель решила держать — ${signal.reasoning}`);
+      Log.info("kondratyev close", `${symbol}: модель решила держать — ${signal.reasoning}`);
     }
 
     const message = messages.find((message) => message.id === signal.id)!;
 
     if (!message) {
       if (signal.action === "close") {
-        Log.info("vershinin close", `${symbol}: пост ${signal.id} не найден в окне, решение о закрытии отброшено`);
+        Log.info("kondratyev close", `${symbol}: пост ${signal.id} не найден в окне, решение о закрытии отброшено`);
       }
       return { signal: null };
     }
@@ -258,7 +258,7 @@ const getCloseSignal = Cache.file(
   },
   {
     interval: "4h",
-    name: "vershinin_trader_close_v2",
+    name: "kondratyev_trading_close_v1",
   },
 );
 
@@ -270,7 +270,7 @@ listenIdlePing(async ({ symbol, when, currentPrice }) => {
   if (signal.position !== "long" && signal.position !== "short") {
     return;
   }
-  Log.info("vershinin trade", `${symbol}: открываю ${signal.position} от цены ${currentPrice} по посту ${signal.id}, хард-стоп ${HARD_STOP_PERCENT}%`);
+  Log.info("kondratyev trade", `${symbol}: открываю ${signal.position} от цены ${currentPrice} по посту ${signal.id}, хард-стоп ${HARD_STOP_PERCENT}%`);
   await commitCreateSignal(symbol, {
     id: `${signal.id}-${signal.symbol.toLowerCase()}`,
     symbol: signal.symbol,
@@ -292,10 +292,10 @@ listenActivePing(async ({ symbol, when, data }) => {
     return;
   }
   if (new Date(message.date).getTime() <= data.pendingAt) {
-    Log.info("vershinin close", `${symbol}: close-пост ${signal.id} опубликован ДО открытия позиции — относится к предыдущей позиции автора, игнорирую`);
+    Log.info("kondratyev close", `${symbol}: close-пост ${signal.id} опубликован ДО открытия позиции — относится к предыдущей позиции автора, игнорирую`);
     return;
   }
-  Log.info("vershinin trade", `${symbol}: закрываю позицию по посту ${signal.id} от ${new Date(message.date).toISOString()}`);
+  Log.info("kondratyev trade", `${symbol}: закрываю позицию по посту ${signal.id} от ${new Date(message.date).toISOString()}`);
   await commitClosePending(symbol, {
     note: JSON.stringify({ signal, message: omit(message, "photo"), url }, null, 2),
   });

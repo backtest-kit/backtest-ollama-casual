@@ -12,18 +12,11 @@ import { parseArgs } from "util";
 
 const SYMBOL_LIST = [
   "BTCUSDT",
-  "POLUSDT",
-  "ZECUSDT",
-  "HYPEUSDT",
-  "DOGEUSDT",
-  "SOLUSDT",
-  "PENGUUSDT",
-  "TRXUSDT",
-  "HBARUSDT",
-  "NEARUSDT",
-  "FARTCOINUSDT",
   "ETHUSDT",
-  "PUMPUSDT",
+  "ARBUSDT",
+  "SUIUSDT",
+  "ZECUSDT",
+  "XRPUSDT",
 ];
 
 Object.assign(globalThis, { SYMBOL_LIST });
