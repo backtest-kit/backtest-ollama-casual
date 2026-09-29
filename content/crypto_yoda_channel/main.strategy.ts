@@ -141,7 +141,7 @@ const getSignal = Cache.file(
     
     {
       const [msg] = messages;
-      console.log("Parsing: ", msg.content.slice(-64));
+      console.log("Parsing: ", msg.content.slice(0, 64));
     }
 
     const entry = await generateObject(
