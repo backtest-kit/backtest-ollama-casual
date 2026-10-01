@@ -1,4 +1,4 @@
-import { addStrategySchema, Cache, commitClosePending, commitSignalNotify, listenActivePing, State } from "backtest-kit";
+import { addStrategySchema, Cache, commitClosePending, commitSignalNotify, listenActivePing, State, toPlainString } from "backtest-kit";
 import { scrapeLookback } from "telegram-reader";
 import { memoize, str } from "functools-kit";
 import {
@@ -141,7 +141,7 @@ const getSignal = Cache.file(
     
     {
       const [msg] = messages;
-      console.log("Parsing: ", msg.content.slice(0, 64));
+      console.log("Parsing: ", toPlainString(msg.content).slice(0, 64));
     }
 
     const entry = await generateObject(
