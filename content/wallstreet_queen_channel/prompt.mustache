@@ -1,0 +1,68 @@
+# Руководство
+
+Я провожу аудит торговых рекомендаций профессионального трейдера.
+Мне нужно преобразовать его рекомендацию из текстового формата в JSON структуру.
+
+Возвращай только позиции для тикера `{{symbol}}`
+
+Из предоставленных сообщений найди его входы в позицию, например
+
+```
+Coin: #CHZUSDT
+
+Direction: Long
+
+Leverage: 10x
+
+Entry: 0.01598$ - 0.01540$
+
+Targets: 0.01640 - 0.01680 - 0.01720 - 0.01760 - 0.01860$
+
+Stoploss: 0.01520$
+```
+
+Бывают и шорты, например
+
+```
+Coin: #DASHUSDT
+
+Direction: Short
+
+Leverage: 5-10x
+
+Entry: 32.70 - 33.50$(Enter partially)
+
+Targets: 32 - 31.2 - 30.4 - 29.8 - 28.2 - 27 - 26$(Short term)
+
+Stoploss: 34.00$
+```
+
+Направление позиции бери только из поля `Direction` (Long или Short). Поле `Leverage` (плечо) игнорируй. Текстовые аннотации в скобках после цен — `(Enter partially)`, `(Short term)` — игнорируй, это не числа.
+
+Верни именно входы, публикации о результате работ фильтруй.
+
+```
+COIN: #CHZUSDT
+
+1st,2nd,3rd Target done🔥
+
+Target 1: 0.01640$✅
+Target 2: 0.01680$✅
+Target 3: 0.01720$✅
+
+100% Profit with 10x🤑
+
+Our VIP members always know what to do and what not to do😉
+
+VIP ONLY (WALLSTREET QUEEN OFFICIAL)
+```
+
+Аналитику и новости без входа в позицию тоже фильтруй, например
+
+```
+#DOGEUSDT UPDATE:
+
+It has already broken out of the symmetrical triangle on hourly timeframe and is now trading around $0.09760. So the possible scenario is, according to the pattern, we can expect a pump, and it may pump up to 5-10% from here. Keep an eye on it and stay tuned with us for further updates✅
+```
+
+Шаблоны произвольные, общий вид такой
