@@ -1,6 +1,6 @@
-import { addStrategySchema, Cache, commitClosePending, commitSignalNotify, listenActivePing, State } from "backtest-kit";
+import { Position, addStrategySchema, Cache, commitClosePending, commitSignalNotify, listenActivePing, listenError, Log, State } from "backtest-kit";
 import { scrapeLookback } from "telegram-reader";
-import { memoize, str } from "functools-kit";
+import { errorData, getErrorMessage, memoize, str } from "functools-kit";
 import {
   generateObject,
   InferenceName,
@@ -10,37 +10,102 @@ import { omit } from "lodash";
 import { readFile } from "fs/promises";
 import Mustache from "mustache";
 
-type Position = "short" | "long";
-
 const CHANNEL_NAME = "crypto_yoda_channel" as const;
 
-const LEVEL_STATE = new State({
-  initialData: { lastLevel: 0 },
-  name: "level_state",
-});
+const HARD_STOP_PERCENT = 7.5;
 
-const LEVEL_DRIFT_RATIO = 0.3;
 const FRESH_WINDOW_MINUTES = 15;
 
-function getCurrentLevel(position: Position, levels: number[], currentPrice: number) {
-  if (position === "long") {
-    return levels.filter((level) => currentPrice >= level).length;
+// Профит-лок словарём часов со взведением по пику: порог часа считается взведённым,
+// только если пик pnl реально доходил до него — закрытие при падении ниже взведённого
+// порога. Без этого рост порога (1.0 -> 1.5 на 10ч) закрывал бы позицию с pnl 1.2,
+// никогда не имевшую 1.5, на самом переходе ступени.
+// До 3ч не армирован (ранняя болтанка режет середняков). Порог растёт с возрастом —
+// плоский +1% после ~6-10ч перестаёт быть эффективным (пики лосей ранние, а зрелая
+// позиция обязана удерживать больше). Симуляция по 18 сигналам августа: +9.6пп к сумме
+// выборки, 3 из 7 лосей в плюс; гигантов (+17.9, +11.6) лок не трогает.
+const PROFIT_LOCK_BY_HOUR: Record<number, number> = {
+  3: 1.0,
+  10: 1.5,
+  16: 2.0,
+};
+
+function getProfitLockLevel(hoursActive: number) {
+  let level: number | null = null;
+  for (const [hour, value] of Object.entries(PROFIT_LOCK_BY_HOUR)) {
+    if (hoursActive >= Number(hour)) {
+      level = value;
+    }
   }
-  return levels.filter((level) => currentPrice <= level).length;
+  return level;
 }
 
-function getLevelStep(levels: number[], lastLevel: number) {
-  const levelPrice = levels[lastLevel - 1];
-  const neighborPrice = lastLevel > 1 ? levels[lastLevel - 2] : levels[lastLevel];
-  return Math.abs(levelPrice - neighborPrice);
+const PROFIT_LOCK_STATE = new State({
+  initialData: { peakPnl: -100 },
+  name: "profit_lock_state",
+});
+
+// Трейлинг-тейк словарями часов. Задача — поймать статистически редкий большой плюс
+// (уровня +20%), а НЕ дожимать середняков: их ведут профит-лок и временной стоп.
+// Настройки из структуры откатов раннеров выборки (ETH#5815 пик 26.2%, SOL#5816 пик 19.2%):
+// на высоте они дышат волнами до 4.7пп и продолжают расти, поэтому вооружение — только
+// с пика 8% (туда доехали 2 из 18 сигналов), допустимый откат 5пп — глубже любой
+// пережитой волны раннеров. На выборке августа не срабатывает ни разу (Δ=0.00 к стеку):
+// чистая страховка от коллапса с большого пика, забирающая >= пик-5пп, если он случится.
+const TRAILING_TAKE_ARM_BY_HOUR: Record<number, number> = {
+  0: 8.0,
+};
+const TRAILING_TAKE_RETRACE_BY_HOUR: Record<number, number> = {
+  0: 5.0,
+};
+
+function getTrailingArm(hoursActive: number) {
+  let value = TRAILING_TAKE_ARM_BY_HOUR[0];
+  for (const [hour, v] of Object.entries(TRAILING_TAKE_ARM_BY_HOUR)) {
+    if (hoursActive >= Number(hour)) {
+      value = v;
+    }
+  }
+  return value;
 }
 
-function getLevelDrift(position: Position, levels: number[], lastLevel: number, currentPrice: number) {
-  const levelPrice = levels[lastLevel - 1];
-  const drift = position === "long"
-    ? levelPrice - currentPrice
-    : currentPrice - levelPrice;
-  return Math.max(drift, 0);
+function getTrailingRetrace(hoursActive: number) {
+  let value = TRAILING_TAKE_RETRACE_BY_HOUR[0];
+  for (const [hour, v] of Object.entries(TRAILING_TAKE_RETRACE_BY_HOUR)) {
+    if (hoursActive >= Number(hour)) {
+      value = v;
+    }
+  }
+  return value;
+}
+
+const TRAILING_TAKE_STATE = new State({
+  initialData: { peakPnl: 0 },
+  name: "trailing_take_state",
+});
+
+// Динамический временной стоп: пол pnl (в %), сужается с возрастом позиции.
+// Значения — БУКВАЛЬНО минимально допустимый pnl в этот час: упали ниже — закрываемся.
+// Словарь выведен из траекторий 18 сигналов августа: полы глубже худших просадок,
+// которые переживали ПОБЕДИТЕЛИ в соответствующий час (симуляция: 0 убитых победителей,
+// +7пп к сумме pnl выборки). Берётся значение наибольшего ключа <= возраста,
+// после 24ч действует последний (-1%).
+const PNL_FLOOR_BY_HOUR: Record<number, number> = {
+  0: -4.5,
+  6: -3.0,
+  12: -2.0,
+  18: -1.5,
+  24: -1.0,
+};
+
+function getPnlFloor(hoursActive: number) {
+  let floor = PNL_FLOOR_BY_HOUR[0];
+  for (const [hour, value] of Object.entries(PNL_FLOOR_BY_HOUR)) {
+    if (hoursActive >= Number(hour)) {
+      floor = value;
+    }
+  }
+  return floor;
 }
 
 const getPrompt = memoize(
@@ -183,7 +248,7 @@ const getSignal = Cache.file(
 
 addStrategySchema({
   strategyName: "main_strategy",
-  getSignal: async (symbol, when) => {
+  getSignal: async (symbol, when, currentPrice) => {
 
     const { entry, message, url } = await getSignal(symbol, when);
 
@@ -191,7 +256,7 @@ addStrategySchema({
       return null;
     }
 
-    if (entry.position === "wait") {
+    if (entry.position !== "long" && entry.position !== "short") {
       return null;
     }
 
@@ -202,20 +267,18 @@ addStrategySchema({
     if (!entry.targets[2]) {
       return null;
     }
-  
-    const priceTakeProfit = entry.position === "long"
-      ? Math.max(...entry.targets)
-      : Math.min(...entry.targets);
 
     const info = { symbol, entry, message: omit(message, "photo"), url };
 
     return {
       id: `${entry.id}-${entry.symbol.toLowerCase()}`,
       symbol: entry.symbol,
-      position: <Position> entry.position,
-      priceStopLoss: entry.stoploss,
-      priceTakeProfit,
-      minuteEstimatedTime: Infinity,
+      ...Position.moonbag({
+        position: entry.position,
+        currentPrice,
+        percentStopLoss: HARD_STOP_PERCENT,
+      }),
+      minuteEstimatedTime: 24 * 60,
       payload: {
         levels: entry.targets,
       },
@@ -224,42 +287,86 @@ addStrategySchema({
   },
 });
 
-listenActivePing(async ({ data, currentPrice, backtest, when }) => {
-  const levels = <number[]>data.payload.levels;
+listenActivePing(async ({ symbol, data, currentPrice, when }) => {
+  const hoursActive = (when.getTime() - data.pendingAt) / 3_600_000;
+  const floor = getPnlFloor(hoursActive);
 
-  if (!levels?.length) {
+  const pnlPercent = data.pnl.pnlPercentage;
+
+  if (pnlPercent > floor) {
     return;
   }
 
-  const currentLevel = getCurrentLevel(<Position>data.position, levels, currentPrice);
-  const { lastLevel } = await LEVEL_STATE.getState();
+  await commitSignalNotify(symbol, {
+    notificationNote: str.newline(
+      `Динамический стоп: pnl ${pnlPercent.toFixed(2)}% ниже пола ${floor}% на ${Math.floor(hoursActive)}-м часу позиции`,
+      `Позиция закрыта временным стопом`,
+    ),
+  });
+  await commitClosePending(symbol);
+});
 
-  if (currentLevel > lastLevel) {
-    await commitSignalNotify(data.symbol, {
+listenActivePing(async ({ symbol, data, currentPrice, when }) => {
+  const hoursActive = (when.getTime() - data.pendingAt) / 3_600_000;
+  const lockLevel = getProfitLockLevel(hoursActive);
+
+  if (lockLevel === null) {
+    return;
+  }
+
+  const pnlPercent = data.pnl.pnlPercentage;
+
+  const { peakPnl } = await PROFIT_LOCK_STATE.getState();
+  const peak = Math.max(peakPnl, pnlPercent);
+
+  if (peak >= lockLevel && pnlPercent < lockLevel) {
+    await commitSignalNotify(symbol, {
       notificationNote: str.newline(
-        `Достигнут уровень ${currentLevel} из ${levels.length} (цель ${levels[currentLevel - 1]})`,
-        `Трейлинг уровней продолжает сопровождение`,
+        `Профит-лок: pnl ${pnlPercent.toFixed(2)}% ниже порога ${lockLevel}% (пик ${peak.toFixed(2)}%, позиции ${Math.floor(hoursActive)}ч)`,
+        `Прибыль зафиксирована`,
       ),
     });
-    await LEVEL_STATE.setState({ lastLevel: currentLevel });
+    await commitClosePending(symbol);
     return;
   }
 
-  if (!lastLevel) {
+  if (pnlPercent > peakPnl) {
+    await PROFIT_LOCK_STATE.setState({ peakPnl: pnlPercent });
+  }
+});
+
+listenActivePing(async ({ symbol, data, currentPrice, when }) => {
+  const hoursActive = (when.getTime() - data.pendingAt) / 3_600_000;
+  const pnlPercent = data.pnl.pnlPercentage;
+
+  const { peakPnl } = await TRAILING_TAKE_STATE.getState();
+
+  if (pnlPercent > peakPnl) {
+    await TRAILING_TAKE_STATE.setState({ peakPnl: pnlPercent });
     return;
   }
 
-  const drift = getLevelDrift(<Position>data.position, levels, lastLevel, currentPrice);
-  const step = getLevelStep(levels, lastLevel);
-  const driftRatio = drift / step;
-
-  if (drift > step * LEVEL_DRIFT_RATIO) {
-    await commitSignalNotify(data.symbol, {
-      notificationNote: str.newline(
-        `Цена откатилась за уровень ${lastLevel} на ${(driftRatio * 100).toFixed(0)}% шага при люфте ${LEVEL_DRIFT_RATIO * 100}%`,
-        `Позиция закрыта по трейлингу уровней`,
-      ),
-    });
-    await commitClosePending(data.symbol);
+  if (peakPnl < getTrailingArm(hoursActive)) {
+    return;
   }
+
+  if (pnlPercent > peakPnl - getTrailingRetrace(hoursActive)) {
+    return;
+  }
+
+  await commitSignalNotify(symbol, {
+    notificationNote: str.newline(
+      `Трейлинг-тейк: pnl ${pnlPercent.toFixed(2)}% откатился на ${(peakPnl - pnlPercent).toFixed(2)}пп от пика ${peakPnl.toFixed(2)}%`,
+      `Прибыль зафиксирована трейлингом`,
+    ),
+  });
+  await commitClosePending(symbol);
+});
+
+listenError((error) => {
+  console.log(error);
+  Log.debug("error", {
+    error: errorData(error),
+    message: getErrorMessage(error),
+  });
 });
