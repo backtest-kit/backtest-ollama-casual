@@ -497,7 +497,7 @@ Event study по каналу-прототипу (crypto-yoda): зона вхо�
 
 ### 0.1 Датасет
 
-9 траекторий по 61 тику: **toy-горизонт в прод-нотации — T_toy = 61, минуты 0..60 = 0..T_toy−1** — финал, бейзлайн и time-exit на минуте 60 = T_toy−1, сквозная конвенция «0..T−1» соблюдена (связующая лока W3 судится на t=59, предпоследней минуте горизонта). Масштаб к проду `t_prod = 24·t_toy` применяется к минутам. Пути кусочно-линейные, старт pnl(0) = −0.4.
+9 траекторий по 61 тику: **toy-горизонт в прод-нотации — T_toy = 61, минуты 0..60 = 0..T_toy−1** — финал, бейзлайн и time-exit на минуте 60 = T_toy−1, сквозная конвенция «0..T−1» соблюдена (связующая лока W3 судится на t=59, предпоследней минуте горизонта). Масштаб к проду `t_prod = 24·t_toy` — **иллюстративный и применяется к минутам, не к горизонту** (61·24 = 1464 ≠ 1440; горизонты toy и прода соотносятся конвенцией 0..T−1, а не множителем). Пути кусочно-линейные, старт pnl(0) = −0.4.
 
 | id | опорные точки (t, pnl) | финал | роль |
 |---|---|---|---|
@@ -515,7 +515,7 @@ Event study по каналу-прототипу (crypto-yoda): зона вхо�
 
 ```js
 // appendix0.dataset.mjs — генератор канонического датасета в формате строк дампа
-export const T = 60; // прод: 1440; масштаб t_prod = 24 * t_toy
+export const T_TOY = 61;    // горизонт в прод-нотации: минуты 0..T_TOY−1 (= 0..60)
 export const L_LIQ = -10.4; // λ=10: −100/λ − издержки
 
 const seg = (pts) => (t) => {
@@ -541,17 +541,18 @@ export const MONTHS = { M1: ["W1", "L1", "C"], M2: ["W2", "L2", "R"], M3: ["W3",
 
 export const rows = [];
 for (const [id, f] of Object.entries(PATHS)) {
-  const last = id === "C" ? 25 : T; // C обрезана стопом сборщика -50 на t=25
+  // lastIdx — индекс последней минуты: T_TOY−1 для полных, 25 для C (стоп сборщика -50)
+  const lastIdx = id === "C" ? 25 : T_TOY - 1;
   rows.push({ action: "opened", signalId: id, openTime: 0, priceOpen: 100 });
   let mfe = -Infinity, mae = Infinity;
-  for (let t = 0; t <= last; t++) {
+  for (let t = 0; t <= lastIdx; t++) {
     const pnl = +f(t).toFixed(4);
     mfe = Math.max(mfe, pnl); mae = Math.min(mae, pnl);
     rows.push({ action: "active", signalId: id, timestamp: t * 60_000, pnl,
                 peakProfitPercentage: mfe, maxDrawdownPercentage: mae });
   }
-  rows.push({ action: "closed", signalId: id, pnl: +f(last).toFixed(4),
-              closeReason: id === "C" ? "stop_loss" : "time", duration: last });
+  rows.push({ action: "closed", signalId: id, pnl: +f(lastIdx).toFixed(4),
+              closeReason: id === "C" ? "stop_loss" : "time", duration: lastIdx });
 }
 ```
 
@@ -570,14 +571,14 @@ export function groupDump(rows, T) {
     if (r.action === "closed") {
       const tr = traj[r.signalId];
       tr.finalPnl = r.pnl;              // сырой финал сборщика; разметка — в реплее, с ликвидационным кэпом
-      tr.truncated = r.duration < T;
+      tr.truncated = r.duration < T - 1; // duration — индекс последней минуты; полная = T−1
     }
   }
   return traj;
 }
 ```
 
-**Ожидаемый выход** (`groupDump(rows, 60)`): таблица 0.1 (finalPnl/truncated), разметка победителей — в 0.3 (ликвидационный кэп).
+**Ожидаемый выход** (`groupDump(rows, T_TOY)` = `groupDump(rows, 61)`): таблица 0.1 (finalPnl/truncated; C: duration 25 < 60 → truncated ✓), разметка победителей — в 0.3 (ликвидационный кэп).
 
 **Ручная проверка**: W2 на t=10 — интерполяция даёт −1.6 = минимум пути → mae(конец) = −1.6 ✓.
 
