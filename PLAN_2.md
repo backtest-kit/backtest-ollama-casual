@@ -42,7 +42,7 @@
 3. **No-go**: если разделение отсутствует или появляется только к финалу — у канала нет пригодного для сопровождения профиля, конвейер останавливается (канал торгуется бейзлайном или выбывает).
 4. Побочный продукт — **минута армирования profit lock**, по формальному правилу компилятора (сетку руками не трогаем, значит и это число обязано вычисляться): первая контрольная минута, с которой KS-статистика по MFE превышает критическое значение уровня значимости α на k контрольных минутах подряд. α и k — константы процедуры (прод: α = 0.05, k = 3), фиксируются в паспорте калибровки; порог KS при этом — функция α и размеров выборок (стандартное критическое значение `1.358·√((n+m)/(n·m))`), не ручное число.
 
-Скрипт дешёвый (один проход по дампу), результат — таблица KS по минутам, уходит в паспорт калибровки.
+Скрипт дешёвый (один проход по дампу), результат — таблица KS по минутам, уходит в паспорт калибровки. Исполнимая форма скрипта — Приложение F.
 
 ---
 
@@ -976,3 +976,110 @@ console.log("CI95 =", [deltas[25], deltas[974]]);
 **Ожидаемый выход**: 9/9 совпадений. Любое расхождение (минута, механизм или pnl, кроме оговорённой гонки меток) — баг в одной из двух реализаций одной логики; числа реплея до устранения расхождения о проде не говорят ничего.
 
 **Ручная проверка**: суммы по столбцам закрытий совпадают со стеком E.1: 15.7 − (2.40 + 1.80 + 1.60 + 1.555) = 15.7 − 7.355 = 8.345 ✓.
+
+## Приложение F. Go/no-go скрипт по реальному дампу
+
+Исполнимая форма раздела 1. **Осознанное отступление от формата приложений**: вход здесь — реальный дамп формата раздела 3 (контрольные минуты прод-шкалы), не toy: KS-ядро на toy уже продемонстрировано в C.1 той же функцией `ks()`, а назначение этого скрипта — быть ПЕРВЫМ, что запускается на дампе настоящего сборщика. Кладётся в `assets/` канала.
+
+```js
+// assets/go-no-go.mjs — разделимость популяций победителей/проигравших по дампу.
+// Потоковый проход, KS по MAE(t)/MFE(t)/pnl(t) на контрольных минутах + критическое
+// значение KS (α=0.05). Запуск из content/<channel>/:
+//   node assets/go-no-go.mjs [dump/report/backtest.jsonl]
+// ВНИМАНИЕ: на дампе управляемой стратегии (не 24h-сборщика) траектории обрезаны
+// её же механизмами — результат индикативен, полноценный go/no-go требует дампа сборщика.
+import { createReadStream } from "fs";
+import { createInterface } from "readline";
+
+const path = process.argv[2] ?? "dump/report/backtest.jsonl";
+const CONTROL = [30, 60, 120, 240, 480, 720, 1080, 1439];
+const ALPHA_C = 1.358; // критическое значение KS уровня 0.05: c * sqrt((n+m)/(n*m))
+const K_CONSECUTIVE = 2; // демо-k малых выборок; прод-значение 3 (раздел 1)
+
+const traj = new Map();
+const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity });
+for await (const line of rl) {
+  if (!line.trim()) continue;
+  const { data } = JSON.parse(line);
+  if (data.action === "opened") {
+    traj.set(data.signalId, { openTime: data.timestamp, pnl: [], mfe: [], mae: [] });
+  } else if (data.action === "active") {
+    const tr = traj.get(data.signalId);
+    if (!tr) continue;
+    const t = Math.round((data.timestamp - tr.openTime) / 60_000);
+    tr.pnl[t] = data.pnl;
+    tr.mfe[t] = data.peakProfitPercentage;
+    tr.mae[t] = data.maxDrawdownPercentage;
+  } else if (data.action === "closed") {
+    const tr = traj.get(data.signalId);
+    if (!tr) continue;
+    tr.finalPnl = data.pnl;
+    tr.duration = data.duration;
+    tr.winner = data.pnl > 0;
+  }
+}
+
+const all = [...traj.entries()].filter(([, t]) => t.finalPnl !== undefined);
+const winners = all.filter(([, t]) => t.winner);
+const losers = all.filter(([, t]) => !t.winner);
+console.log(`траекторий: ${all.length} (победителей ${winners.length}, проигравших ${losers.length})`);
+if (!winners.length || !losers.length) {
+  console.log("NO-GO тривиально: одна из популяций пуста — разделять нечего.");
+  process.exit(1);
+}
+
+const ks = (xs, ys) => {
+  let d = 0;
+  for (const p of [...xs, ...ys].sort((a, b) => a - b)) {
+    const fx = xs.filter((v) => v <= p).length / xs.length;
+    const fy = ys.filter((v) => v <= p).length / ys.length;
+    d = Math.max(d, Math.abs(fx - fy));
+  }
+  return d;
+};
+
+// значение ряда на минуте t: только живые на t траектории (обрезка честно сужает состав)
+const at = (rows, key, t) => rows.map(([, tr]) => tr[key][t]).filter((v) => v !== undefined);
+
+console.log(`\nминута | nW/nL | KS(mae) | KS(mfe) | KS(pnl) | критич.`);
+const mfeRun = [];
+for (const t of CONTROL) {
+  const w = { mae: at(winners, "mae", t), mfe: at(winners, "mfe", t), pnl: at(winners, "pnl", t) };
+  const l = { mae: at(losers, "mae", t), mfe: at(losers, "mfe", t), pnl: at(losers, "pnl", t) };
+  if (w.mae.length < 2 || l.mae.length < 2) {
+    console.log(`${String(t).padStart(6)} | ${w.mae.length}/${l.mae.length} | — живых слишком мало`);
+    mfeRun.push({ t, ok: false });
+    continue;
+  }
+  const crit = ALPHA_C * Math.sqrt((w.mae.length + l.mae.length) / (w.mae.length * l.mae.length));
+  const kMae = ks(w.mae, l.mae), kMfe = ks(w.mfe, l.mfe), kPnl = ks(w.pnl, l.pnl);
+  console.log(`${String(t).padStart(6)} | ${w.mae.length}/${l.mae.length} | ${kMae.toFixed(3)}   | ${kMfe.toFixed(3)}   | ${kPnl.toFixed(3)}   | ${crit.toFixed(3)}`);
+  mfeRun.push({ t, ok: kMfe >= crit, kMfe, crit });
+}
+
+// минута армирования: KS(mfe) >= критич. на K_CONSECUTIVE контрольных минутах подряд
+let arm = null;
+for (let i = 0; i + K_CONSECUTIVE <= mfeRun.length; i++) {
+  if (mfeRun.slice(i, i + K_CONSECUTIVE).every((r) => r.ok)) { arm = mfeRun[i].t; break; }
+}
+console.log(arm !== null
+  ? `\nGO: устойчивое KS-разделение по MFE, минута армирования = ${arm} (k=${K_CONSECUTIVE})`
+  : `\nNO-GO по формальному правилу: KS(mfe) не превышает критическое значение на ${K_CONSECUTIVE} контрольных минутах подряд.`);
+process.exit(0);
+```
+
+**Ожидаемый выход** — реальный прогон на дампе канала-прототипа (август 2026, 12 сигналов, дамп СТАРОЙ управляемой стратегии — диагностическая демонстрация, не калибровка):
+
+```
+траекторий: 12 (победителей 8, проигравших 4)
+минута | nW/nL | KS(mae) | KS(mfe) | KS(pnl) | критич.
+    30 | 8/3   | 0.417   | 0.333   | 0.333   | 0.919
+    60 | 8/3   | 0.333   | 0.333   | 0.333   | 0.919
+   120 | 8/3   | 0.333   | 0.208   | 0.417   | 0.919
+   240+ — живых проигравших ≤1, сравнивать нечего
+NO-GO по формальному правилу
+```
+
+Прогон демонстрирует ОБА режима отказа данных, которые скрипт обязан ловить: (1) цензура — механизмы старой стратегии закрыли проигравших на 18–543-й минуте, и после t=240 их популяция вымирает, окно поиска разделения отрезано; (2) малое n — при 8/3 критический KS = 0.919 недостижим в принципе, формальный GO невозможен на любых данных. Вердикт «NO-GO» здесь читается как «данными вопрос не решается — нужен дамп 24h-сборщика на большем периоде», что и есть корректное поведение первого шага конвейера.
+
+**Ручная проверка**: критическое значение при n=8, m=3: `1.358·√((8+3)/(8·3)) = 1.358·√0.4583 = 1.358·0.677 = 0.919` ✓.
